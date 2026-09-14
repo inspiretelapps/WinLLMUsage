@@ -1,6 +1,5 @@
 #if WINDOWS_APP
 using System.Windows;
-using System.Windows.Controls;
 using WinLLMUsage.App.ViewModels;
 
 namespace WinLLMUsage.App.WindowsUi;

@@ -1,5 +1,6 @@
 #if WINDOWS_APP
 using System.Windows;
+using Microsoft.Extensions.Hosting;
 using WinLLMUsage.App.ViewModels;
 using WinLLMUsage.Host;
 using WinLLMUsage.Windows;
