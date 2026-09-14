@@ -35,7 +35,19 @@ Write-Host "Portable ZIP: $portable"
 dotnet tool restore
 $setupDir = Join-Path $out "setup"
 New-Item -ItemType Directory -Force -Path $setupDir | Out-Null
-dotnet tool run vpk -- pack --packId WinLLMUsage --packVersion $Version --packDir "$out/app" --mainExe WinLLMUsage.exe --outputDir $setupDir --packTitle "WinLLMUsage" --skipVelopackAppCheck
+$vpkOk = $true
+try {
+    dotnet tool run vpk -- pack --packId WinLLMUsage --packVersion $Version --packDir "$out/app" --mainExe WinLLMUsage.exe --outputDir $setupDir --packTitle "WinLLMUsage" --runtime win-x64 --skipVeloAppCheck
+} catch {
+    Write-Warning $_.Exception.Message
+    $vpkOk = $false
+    try {
+        dotnet tool run vpk -- pack --packId WinLLMUsage --packVersion $Version --packDir "$out/app" --mainExe WinLLMUsage.exe --outputDir $setupDir --packTitle "WinLLMUsage" --runtime win-x64
+    } catch {
+        Write-Warning $_.Exception.Message
+        $vpkOk = $false
+    }
+}
 
 $setup = Get-ChildItem $setupDir -Filter "*Setup.exe" -ErrorAction SilentlyContinue | Select-Object -First 1
 if (-not $setup) {

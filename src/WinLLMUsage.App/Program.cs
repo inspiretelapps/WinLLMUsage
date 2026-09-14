@@ -1,4 +1,5 @@
 using Microsoft.Extensions.Hosting;
+using Velopack;
 using WinLLMUsage.Core;
 using WinLLMUsage.Host;
 using WinLLMUsage.Windows;
@@ -12,7 +13,7 @@ public static class Program
 #endif
     public static int Main(string[] args)
     {
-        VelopackBootstrap.Run();
+        VelopackApp.Build().Run();
         using var instance = new SingleInstanceGuard(@"Local\WinLLMUsage-" + Environment.UserName);
         if (!instance.CreatedNew)
         {
