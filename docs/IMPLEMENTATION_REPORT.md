@@ -1,275 +1,154 @@
-# WinLLMUsage implementation report
+# WinLLMUsage implementation review
 
-**For:** engineering / product review  
-**Date:** 14 September 2026  
-**Workspace:** `/Users/jaco/codex/winllmusage`  
-**Version in tree:** `0.1.0-dev`  
-**GitHub (private):** https://github.com/inspiretelapps/WinLLMUsage  
-**Commit:** `c8cd18f` (`main`)  
-**Verdict:** implemented engine, CLI, local API, and all 11 provider pipelines; **not Windows-verified**. No GitHub repository existed before this report; `inspiretelapps/WinLLMUsage` was created and pushed as a **private** repo.
+Reviewed: 14 September 2026
 
----
+Reviewed revision: `ab983a4b88581121c13193ac1fcd4e52c21a2022` (`main`; application code introduced in `c8cd18f`)
 
-## 1. What was asked
+Reference: OpenUsage v0.7.11, `753e2fe4bc82a011567d16d8deb88176b58ed24e`
 
-Build the entire `WINDOWS_IMPLEMENTATION_PLAN.md` in one continuous delivery:
+Repository: [inspiretelapps/WinLLMUsage](https://github.com/inspiretelapps/WinLLMUsage), confirmed private during review
 
-- Independent Windows product **WinLLMUsage** (not a rebranded OpenUsage binary)
-- C# on **.NET 10 LTS**, WPF tray UI, shared provider engine, CLI, compatibility HTTP API
-- Behavioral baseline: OpenUsage **v0.7.11**, commit `753e2fe4bc82a011567d16d8deb88176b58ed24e`
-- All **11** providers: Claude, Codex, Cursor, Antigravity, Copilot, Devin, Grok, Ollama, OpenCode, OpenRouter, Z.ai
-- Preserve resource IDs, defaults, pricing rules, CLI/HTTP contracts
-- Windows adaptations from plan §3 only (tray instead of menu-bar strip, DPAPI, folder sync instead of iCloud, Velopack, manual Privacy Mode)
-- Honest blockers; no invented Windows credential formats, no fake live logins, no published release
+Development version: `0.1.0-dev`
 
-The plan’s own definition of done includes a clean-machine Windows 11 x64 installer check. That check **cannot** be claimed from this macOS workspace.
+**Verdict: partial implementation; Windows build failing; not ready for release or acceptance against the implementation plan.** There are 11 registered provider classes, a shared CLI/headless host, core models, serializers and some infrastructure. This does not establish 11 working provider integrations or a usable Windows tray application.
 
----
+This review supersedes the earlier report's “implemented but not Windows verified” verdict. Several gaps are missing or incorrect code that can be established from this checkout, not merely unavailable Windows testing. This documentation commit records the findings; it does not fix the application defects below.
 
-## 2. How the work was done
+## Review scope and evidence
 
-### 2.1 Freeze the baseline
+Compared the report and [implementation plan](../WINDOWS_IMPLEMENTATION_PLAN.md) with the project configuration, application entry points, all provider classes, pricing/scanning/cache code, packaging scripts, tests and the vendored reference source. Inspected the existing GitHub Windows CI failure. No live credentials were read, provider requests made, reset credits consumed, or release published during review.
 
-1. Cloned `https://github.com/robinebers/openusage` at tag `v0.7.11`.
-2. Confirmed `git rev-parse HEAD` = `753e2fe4bc82a011567d16d8deb88176b58ed24e`.
-3. Read `Package.swift`, `ProviderCatalog.swift`, `ProviderRuntime.swift`, models, CLI, local HTTP API, default layout, settings migrator, and each provider folder.
-4. Copied bundled pricing JSON into `src/WinLLMUsage.Core/Resources/` (supplement, LiteLLM snapshot, models.dev snapshot).
-5. Kept the Swift tree as `vendor/openusage` (read-only reference, not the shipping app).
-6. Recorded identity, contracts, and Windows path candidates in `docs/UPSTREAM_BASELINE.md`, `docs/PARITY_MATRIX.md`, and `docs/WINDOWS_AUTH_SOURCES.md`.
+Re-ran on macOS ARM64, SDK `10.0.105`:
 
-### 2.2 Port order (plan §10)
-
-| Step | What landed |
-| --- | --- |
-| A. Baseline | Vendor pin + inventory docs |
-| B. Windows boundaries | Candidate paths/env vars per provider; encrypted Desktop/Cursor/Codex vaults marked **Blocked** until a Windows install is inspected |
-| C. Scaffold | `WinLLMUsage.sln`, central package versions, 6 src projects + 5 test projects |
-| D. Pure behavior | MetricLine, descriptors, layout IDs, settings schema v3, pacing, limits/usage serializers, CLI parser |
-| E. Shared I/O | HttpClient transport + proxy, snapshot cache, JSONL reader, SQLite read-only, loopback server, DPAPI wrapper |
-| F. Providers | All 11 runtimes with auth → HTTP → mapper → optional local scan |
-| G. Product shell | Headless app host (refresh loop + API); WPF XAML source for Windows; Codex reset-claim method |
-| H. Verify | `dotnet test` on macOS (28 tests); CLI `--help` / `-v` / unknown option → exit 2 |
-
-No live provider accounts were used. Reset-credit claiming is coded against the documented POST body and only exercised via mapper tests, not against a real Codex account.
-
-### 2.3 Translation method
-
-The C# types are a structured port of the Swift vocabulary, not a new product model:
-
-- `MetricLine` cases: `progress` / `values` / `badge` / `chart` / `text`
-- Limits wire schema: `openusage.limits.v1`
-- Legacy usage route still serializes `.values` as combined `text` lines and `.chart` as `barChart`
-- Refresh cadence: **5 minutes**; provider deadline **120 s**; CLI reuses disk cache, GUI does not treat previous-process cache as fresh
-- Default metric IDs, pins (max 2 per provider), On Demand membership, and schema-v3 remaps (`antigravity.session` → `geminiPro`, `copilot.credits` → `premium`) copied from `DefaultLayout.swift`
-- Ollama `hasLocalCredentials()` is **always false** (explicit opt-in), matching upstream
-- Family matching for CLI/API: exact card id **or** family id (`claude`, `codex`)
-
-Windows-specific storage is injected (`IProviderPaths`, `ISecretStore`, `IHttpTransport`). Provider mappers do not reference WPF or the registry.
-
----
-
-## 3. Solution shape
-
-```
-WinLLMUsage.sln
-src/
-  WinLLMUsage.Core             net10.0   models, contracts, serializers, layout, pricing, pacing
-  WinLLMUsage.Providers        net10.0   11 provider pipelines
-  WinLLMUsage.Infrastructure   net10.0   HTTP, cache, SQLite, JSONL, local API, file secrets
-  WinLLMUsage.Windows          net10.0   DPAPI wrapper, known folders, launch-at-login marker
-  WinLLMUsage.Cli              net10.0   winllmusage.exe console host
-  WinLLMUsage.App              net10.0   generic host + WindowsUi/ WPF source
-tests/                         xUnit, net10.0
-vendor/openusage/              pinned Swift reference
-docs/                          baseline, parity, auth, privacy, verification backlog
-scripts/                       build.ps1, test.ps1, package.ps1, verify-*.ps1
-.github/workflows/             windows-ci.yml, windows-release.yml
+```sh
+dotnet test WinLLMUsage.sln -c Release --logger trx --results-directory /tmp/winllmusage-review-tests
 ```
 
-**Dependency direction** (as specified):
+Result: **28 passed, 0 failed, 0 skipped**. The TRX files are local review artifacts, not committed. The existing [Windows CI run at the reviewed revision](https://github.com/inspiretelapps/WinLLMUsage/actions/runs/34876791647) failed at solution build with three CS0246 errors for `Window` and `RoutedEventArgs`; Windows tests did not execute in that run.
 
-```
-App / CLI → Providers → Core
-                 ↘ Infrastructure
-Windows adapters wrap secrets/paths; they are not imported by Core.
-```
+| Test project | Passed | What the tests establish |
+| --- | ---: | --- |
+| Core.Tests | 20 | Selected CLI parsing, ISO timestamps, serializer routes/resources, layout and migration cases. |
+| Providers.Tests | 3 | One Claude mapping case, one Codex plan/credits case, one reset-credit display mapping case. |
+| Infrastructure.Tests | 3 | Two JSONL-reader cases and one redaction case. |
+| Windows.Tests | 1 | Marker-file creation/removal, **not** Windows startup registration or DPAPI. |
+| App.Tests | 1 | Product package ID, **not** dashboard or tray operation. |
 
-SDK pin: `global.json` → `10.0.105` (roll-forward latest feature). Packages are centrally versioned in `Directory.Packages.props`. Nullable + warnings-as-errors are on.
+The earlier CLI help/version/bad-option checks are historical implementation claims, not additional executions in this review. No complete request/response pipeline, installer, GUI, live authentication, cross-process race, pricing corpus or upstream differential test suite is covered by these 28 tests.
 
----
+## Findings, ordered by impact
 
-## 4. What each layer actually does
+P1 means a blocker to core behavior or safe release. P2 means a material correctness/documentation gap. All findings are open at the reviewed revision.
 
-### 4.1 Core (`WinLLMUsage.Core`)
+### R1 — P1: The application does not build on Windows or start a desktop UI
 
-- **Snapshots:** `ProviderSnapshot` with plan, lines, history, warning vs error category.
-- **Widgets:** factories for percent / bounded dollars / spend tiles (`{id}.today|yesterday|last30`) / usage trend (not pinnable).
-- **Limits API:** selects only descriptors that export `LimitResourceDescriptor`. Missing resources are omitted, never invented as zero. `expiresAt` = `fetchedAt` + 300 s. Sorted JSON keys on the limits envelope.
-- **Usage API:** collection and per-id routes; per-id always an **array**; OPTIONS 204; POST 405; unknown token 404 `provider_not_found`; busy 503.
-- **CLI parser:** one positional provider (lowercased), `--force`, `-h`/`--help`, `-v`/`--version`. Exit 0 / 2 / 4.
-- **Enablement:** enabled-list vs legacy disabled-list; known-provider set so new providers can be probed without overriding user offs.
-- **Migrator:** empty store stamps schema 3; v2 converts disabled list; v3 remaps dead metric IDs.
-- **Pacing:** meter bands (80% warning / 90% critical without a window; projection-based running-out / close / healthy with a reset). Notification transitions with first-observation priming.
-- **Pricing:** three-catalog precedence (supplement → LiteLLM → models.dev) plus optional Codex fallback model. Bundled JSON is an embedded resource.
+[App project](../src/WinLLMUsage.App/WinLLMUsage.App.csproj) targets `net10.0`, has no `UseWPF`, and unconditionally removes the dashboard XAML from `Page` items. [Directory.Build.props](../Directory.Build.props) defines `WINDOWS` on Windows, enabling [dashboard code-behind](../src/WinLLMUsage.App/WindowsUi/DashboardWindow.xaml.cs) without the required WPF types. This is the failure observed in CI, not a hypothetical limitation of macOS testing.
 
-### 4.2 Infrastructure
+[Program.cs](../src/WinLLMUsage.App/Program.cs) starts a generic host and API; it never constructs a WPF Application, dashboard or tray icon. Settings is a message-box placeholder in the disconnected window. Hotkeys, notifications, floating pins, share cards and a usable settings/customization flow are missing.
 
-- `HttpTransport`: `SocketsHttpHandler`, optional `http`/`https`/`socks5` proxy, loopback bypass, per-request timeout (default 15 s).
-- `SnapshotCache`: JSON file; error snapshots are not stored; CLI vs GUI freshness flag.
-- `JsonlStreamingReader`: 64 KiB chunks, skip records &gt; 1 MiB.
-- `LocalUsageServer`: `127.0.0.1:6736`, max 16 connections, CORS `*` GET/OPTIONS, port-in-use leaves the process running.
-- `FileSecretStore` + Windows `DpapiSecretStore` (`ProtectedData`, current user).
-- Log redaction for Bearer tokens, `api_key` / `access_token` JSON fields.
+**Required fix:** configure an actual Windows desktop target and XAML compilation, connect an STA desktop entry point and lifecycle to the shared host, then implement and test the tray/product flows. Merely excluding the code-behind to make CI green would leave the requested app unimplemented.
 
-### 4.3 Providers (all 11 are real runtimes, not dashboard fixtures)
+### R2 — P1: Multiple provider protocols differ from the pinned source
 
-| Provider | Auth read | Network | Local spend |
-| --- | --- | --- | --- |
-| **Claude** | `.claude/.credentials.json`, `CLAUDE_CONFIG_DIR`, `CLAUDE_CODE_OAUTH_TOKEN` | `GET /api/oauth/usage` + OAuth refresh `platform.claude.com/v1/oauth/token` | JSONL under `projects/` |
-| **Codex** | `auth.json` via `CODEX_HOME` / `.codex` / `.config/codex` | `GET chatgpt.com/backend-api/wham/usage`, reset-credits GET/POST consume | `sessions/` + `archived_sessions/` JSONL |
-| **Cursor** | `%APPDATA%\Cursor\...\state.vscdb` `cursorAuth/*` | Connect RPC `GetCurrentPeriodUsage` (+ optional Grok Bot) | not merged (account-wide) |
-| **Antigravity** | loopback language-server ports | `https://127.0.0.1:{port}/quota-summary` | `.gemini/antigravity/conversations` |
-| **Copilot** | `hosts.json` / `apps.json`, then `gh auth token` | `GET api.github.com/copilot_internal/user` | none |
-| **Devin** | `~/.devin/credentials.toml` (Tomlyn) | `POST .../ada/GetUserStatus` | none |
-| **Grok** | `GROK_HOME` / `.grok/auth.json` | billing/settings | `.grok/sessions` JSONL, replay/subagent dedup by id |
-| **Ollama** | `~/.ollama/id_ed25519` (BouncyCastle Ed25519) | signed `GET ollama.com/api/usage` | none (last-4-weeks from API) |
-| **OpenCode** | `auth.json` in data dir | Go usage API | read-only `opencode*.db` |
-| **OpenRouter** | DPAPI / config JSON / `OPENROUTER_API_KEY` | `/api/v1/credits`, optional `/key` | API period rows |
-| **Z.ai** | DPAPI / config / `ZAI_API_KEY` / `GLM_API_KEY` | subscription endpoint | none |
+These are source-level incompatibilities and do not require live accounts to discover:
 
-**401/403** go through a single refresh-then-retry helper (Devin uses source switch instead, matching upstream). Claude **429** keeps local spend and a warning rather than blanking the card.
-
-Codex reset claim: `POST .../rate-limit-reset-credits/consume` with `{ credit_id, redeem_request_id }`. Success codes `reset` and `already_redeemed`. Not exposed on the local HTTP API or CLI.
-
-### 4.4 CLI
-
-`winllmusage [provider] [--force]`
-
-- Prints **only** limits JSON on stdout (plus trailing newline)
-- Diagnostics on stderr, prefixed `winllmusage:`
-- Same engine and cache as the app host
-- `--force` bypasses the 5-minute freshness gate
-- Unknown provider / bad flags → exit **2**
-- Refresh/read warnings → JSON still printed, exit **4**
-
-Verified here: `--help`, `-v` → `winllmusage 0.1.0-dev`, `--nope` → exit 2.
-
-### 4.5 App host
-
-`src/WinLLMUsage.App` is a generic host (compiles on macOS):
-
-- Named mutex so a second GUI launch is a no-op on this host
-- First-run: seed enabled providers from `HasLocalCredentialsAsync` (starter set claude/codex/cursor if none)
-- 5-minute refresh loop
-- Local API hosted unless `winllmusage.localApi.enabled` is false
-
-WPF dashboard XAML lives in `src/WinLLMUsage.App/WindowsUi/` (borderless ~400 DIP window, refresh/settings/exit). It is **not compiled on macOS** (`Page Remove`). Tray `NotifyIcon`, `RegisterHotKey`, and Velopack wiring are specified in the plan and still need a Windows build.
-
----
-
-## 5. Tests that were run
-
-Command (this workspace, macOS, .NET 10.0.105):
-
-```text
-dotnet test WinLLMUsage.sln -c Release
-```
-
-**28 passed, 0 failed.**
-
-| Project | Count | Covers |
+| Provider | Observed implementation | Reference requirement / consequence |
 | --- | --- | --- |
-| Core.Tests | 20 | CLI parse, ISO-8601, limits progress encoding, omit-missing-resources, OPTIONS 204, POST 405, Claude family match, usage array, Ollama session+weekly exports, layout pin cap, v3 remaps, settings migrator |
-| Providers.Tests | 3 | Claude session/weekly/extra cents→dollars; Codex Business Premium / Pro 20x / credits×$0.04; reset-credit available vs used |
-| Infrastructure.Tests | 3 | secret redaction; JSONL record split; oversized-line skip |
-| Windows.Tests | 1 | launch-at-login marker file round-trip |
-| App.Tests | 1 | package id is not upstream `com.robinebers.openusage` |
+| Antigravity | `DiscoverPort()` discards process matches and probes hardcoded ports, including 8080/8000. Sends GET `/quota-summary` without CSRF. Reads JSON conversation files. | Reference discovers the owning process/arguments/ports, calls `RetrieveUserQuotaSummary` through the language-server RPC with CSRF where required, and scans SQLite/protobuf conversations across stores. Current code can select an unrelated local service and misses the actual protocol/history. |
+| OpenCode | Calls `https://opencode.ai/api/usage`; reads top-level `token`/`access_token`/`apiKey`; returns before local scanning when auth is absent or the request fails. | Reference reads `auth.json`'s nested `opencode-go` key, calls `/zen/go/v1/usage`, maps `usage.rolling/weekly/monthly`, and allows hosted local spend without Go quotas. OAuth attribution to Codex is absent. |
+| Z.ai | Calls `/api/biz/subscription` and expects top-level session/weekly objects. | Reference separates `/api/biz/subscription/list` and `/api/monitor/usage/quota/limit`, mapping the quota `limits` array. Current code does not request that quota resource. |
+| Grok | Calls `https://grok.x.ai/api/billing/settings`; no working refresh callback. | Reference uses `cli-chat-proxy.grok.com/v1/billing?format=credits`, a separate `/v1/settings` request and OAuth refresh. |
+| Ollama | Signs `timestamp,path`, sends `Bearer timestamp:signature`, omits `?ts=`, and reads top-level session/weekly fields. | Reference signs `METHOD,request-uri`, includes the timestamp in that URI and public key in the authorization value, and maps `limits.*.usage` fractions plus `activity.cost`. The OpenSSH key-container reader also needs an actual fixture; a generic PEM reader is not proof of compatibility. |
+| Devin | Reads `.devin/credentials.toml` fields `token`/`api_key` or an environment key; no app-database fallback. | Reference uses `windsurf_api_key`, configured `api_server_url`, and CLI-to-app source fallback. The Windows path/format is unverified and the source-switch behavior claimed in the earlier report is absent. |
 
-These are **fixture / contract tests**. They do not prove tray behavior, installer, or live companion auth on Windows 11.
+Evidence: [provider implementations](../src/WinLLMUsage.Providers), [reference providers](../vendor/openusage/Sources/OpenUsage/Providers). The required fix is to translate the actual request builders, auth formats, response mappers and fallbacks, with sanitized upstream-shaped fixtures for every pipeline. These classes should not be described as complete integrations.
 
----
+### R3 — P1: Local spend is not connected to the pricing engine
 
-## 6. Planned Windows adaptations that are in the design (not bugs)
+[ModelPricing.cs](../src/WinLLMUsage.Core/Pricing/ModelPricing.cs) contains rate containers, an estimator and JSON resource-opening helpers. The provider catalog/scanners do not load those resources into an active pricing service or call the estimator. The declared long-context fields are not used by `EstimateCost`; dynamic catalog refresh, request-tier logic and fallback selection are not wired into the product.
 
-From plan §3, intentionally different from macOS OpenUsage:
+[Claude scanning](../src/WinLLMUsage.Providers/Claude/ClaudeProvider.cs) sums input/output and `costUSD ?? 0`; [Codex scanning](../src/WinLLMUsage.Providers/Codex/CodexProvider.cs) accumulates tokens with an unchanged zero cost. Codex only looks for usage fields at the record root, missing the reference's nested `payload.info` accounting. Antigravity similarly produces zero costs and reads the wrong storage format. These paths can report missing/zero costs rather than the reference estimates.
 
-| macOS | This port |
+Pi ingestion, shared Codex request pricing, full subagent/fork deduplication, advisor usage, model breakdowns, unknown-model handling and persisted incremental parsing are not implemented to reference parity.
+
+**Required fix:** port reference-shaped scanners and pricing codecs together; test recorded-cost precedence, absent-versus-zero values, cache tokens, long-context/priority boundaries and replay cases before accepting Total Spend.
+
+### R4 — P1: Refreshed credentials are not persisted and Cursor retries its old token
+
+Claude and Codex refresh methods return updated in-memory records but do not write rotated tokens back to their owned auth files. Later refreshes reload the old credential. Cursor's refresh method only returns HTTP success: it neither consumes the new access token nor updates the headers captured by the retry request. Grok's helper callback always returns false. There is no implemented generation-aware persistence or cross-process credential lock.
+
+Evidence: `RefreshTokenAsync` in [Claude](../src/WinLLMUsage.Providers/Claude/ClaudeProvider.cs), [Codex](../src/WinLLMUsage.Providers/Codex/CodexProvider.cs), [Cursor](../src/WinLLMUsage.Providers/Cursor/CursorProvider.cs), and [Grok.RefreshAsync](../src/WinLLMUsage.Providers/Grok/GrokProvider.cs).
+
+**Required fix:** preserve source ownership and expiry metadata, retry with the returned credential, and implement conditional atomic persistence only for sources that permit writes. Test login changes and concurrent refreshes without live credentials. Keep Desktop sources read-only.
+
+### R5 — P1: Account isolation and shared-cache coordination are not wired
+
+[RefreshCoordinator](../src/WinLLMUsage.Infrastructure/Refresh/RefreshCoordinator.cs) stores every snapshot with `identityKey: null`; `SnapshotCache.HasStaleAccountStamp` has no caller. [ProviderCatalog](../src/WinLLMUsage.Providers/Catalog/ProviderCatalog.cs) constructs one Claude provider, not discovered account/organization cards. A family serializer test does not establish account discovery or isolation. An account switch can therefore retain old-account snapshots.
+
+[SnapshotCache](../src/WinLLMUsage.Infrastructure/Cache/SnapshotCache.cs) loads its dictionary once per instance and uses an in-process lock plus a shared `.tmp` filename. GUI and CLI writers have no shared transaction/lock or reread/merge step. Concurrent writers can collide or overwrite each other's changes, and the GUI need not observe CLI updates. Cache reads and refresh error/backoff dictionaries also lack consistent synchronization with concurrent writes.
+
+**Required fix:** wire identities through discovery, cache validation and in-flight refresh cancellation; implement transactional cross-process storage and per-source refresh coordination; test two accounts and two processes with synthetic inputs.
+
+### R6 — P1: No installer is implemented, and install verification always succeeds
+
+[package.ps1](../scripts/package.ps1) publishes two directories and creates a ZIP/checksum. It never invokes Velopack or produces `Setup.exe`, regardless of whether `vpk` is installed. [verify-install.ps1](../scripts/verify-install.ps1) prints a checklist and exits zero on every platform without asserting anything. Thus a successful script invocation would not verify installation, upgrade or uninstall. The package script also needs explicit native-command failure handling before archiving outputs.
+
+**Required fix:** implement a pinned packaging tool/manifest, stable CLI launcher, actual installer/update lifecycle and clean-machine assertions with truthful failure/skip reporting. Signing credentials are an external prerequisite; the missing installer code is not.
+
+### R7 — P2: GUI freshness incorrectly survives a restart
+
+`SnapshotCache.Store` persists `WrittenThisProcess: true`. `EnsureLoaded` deserializes that flag unchanged, so a later GUI cache instance with `allowsPersistedFreshness: false` can treat a prior process's snapshot as fresh. The earlier report claimed the opposite.
+
+**Required fix:** keep this flag process-local or reset it on deserialize. Add a regression that stores a recent snapshot, creates a second cache instance over the file, expects GUI freshness false and CLI freshness true. A temporary console probe against the built Core/Infrastructure assemblies stored a synthetic snapshot and opened a new GUI-policy cache instance over the same file. It printed `GUI cache fresh after reload: True (expected False)`. The probe used temporary data only and made no network requests.
+
+### R8 — P2: Some missing values become fabricated zero usage
+
+Antigravity, Z.ai, Grok, Devin and OpenCode mappers contain `?? 0` fallbacks for missing usage; Z.ai can also supply a default search limit. Ollama defaults missing activity cost to zero. This differs from the plan's absent-data semantics and can make a malformed response look like an unused allowance.
+
+**Required fix:** validate required fields, omit genuinely absent optional metrics and distinguish unavailable from a provider-reported zero. Add upstream-shaped missing-field fixtures; a successfully parsed JSON document is not necessarily a usable response.
+
+### R9 — P2: Codex reset claiming has no safety-flow or transport tests
+
+[ClaimResetAsync](../src/WinLLMUsage.Providers/Codex/CodexProvider.cs) posts supplied credit/request IDs, but does not fetch/re-match a fresh credit list or bind the operation to the account selected in a confirmation UI. There is no connected confirmation flow or demonstrated idempotency/ambiguous-response handling. [CodexMapperTests](../tests/WinLLMUsage.Providers.Tests/CodexMapperTests.cs) tests display mapping only; it does not invoke the claim method.
+
+**Required fix:** keep this method disconnected from product actions until exact-credit/account checks, deliberate confirmation and mocked duplicate/ambiguous-response tests are implemented. Do not validate by consuming a real credit.
+
+### R10 — P2: Accepted Windows adaptations are not implemented features
+
+Folder sync has history types but no folder transport/watch/merge lifecycle. Startup registration is a marker file, not an HKCU Run entry. Privacy settings are not proof that values are hidden across a UI, notifications or exports. Global shortcut, notifications, share cards and the floating strip are absent. First-run detection also falls back to enabling Claude/Codex/Cursor when nothing is detected, contrary to the plan's empty state.
+
+**Required fix:** implement these product flows before their acceptance tests, and track each separately. Moving from iCloud to folder sync is an accepted design change; omitting sync is not.
+
+### R11 — P2: Release/reproducibility and branding claims need correction
+
+There is no checked-in .NET tool manifest or NuGet `packages.lock.json` set despite the proposed locked restore/tool-restore commands. The native WPF build is already failing, so the earlier “On Windows (full product)” instructions are not a working delivery path.
+
+`src/WinLLMUsage.App/Assets/ProviderIcons/openusage.svg` remains in the application asset tree. Its presence contradicts a blanket statement that the upstream logo is absent; this review did not establish that it is displayed or packaged. Remove/replace it before release and audit resulting artifacts, while retaining upstream source/license attribution in the vendor reference.
+
+## Corrected implementation status
+
+| Area | Status at reviewed revision |
 | --- | --- |
-| Wide menu-bar text/bar strip | One tray icon + optional floating strip (strip UI not wired on macOS host) |
-| Keychain | DPAPI for *app-owned* secrets; companion formats only after evidence |
-| iCloud private container | Folder-based history document model (watcher not finished) |
-| Sparkle | Velopack script skeleton; no feed URL |
-| Screen-capture auto-hide | Manual Privacy Mode setting |
-| PostHog telemetry | Local logs only |
+| Shared models, selected serializers/layout/migration | Partial implementation with selected passing fixtures; full compatibility not established. |
+| CLI and headless refresh/API host | Implemented source; broad end-to-end/error/concurrency coverage missing. |
+| Claude/Codex providers | Selected mapper tests pass; auth rotation, account handling and spend have open defects. |
+| Other nine providers | Partial, live-unverified implementations; several concrete protocol defects in R2. |
+| Pricing and history | Helpers/resources and basic scans; required end-to-end calculation and persistence absent. |
+| Windows UI | Disconnected source; Windows build fails. |
+| Desktop credential stores | DPAPI wrapper for app-owned secrets; companion encrypted-store formats unverified/unimplemented. |
+| Sync/startup/hotkeys/notifications/export | Models/placeholders or missing product integration. |
+| Installer/updater | Not implemented; portable ZIP script is not an installer. |
+| Windows acceptance | Build failure observed in CI; no clean-machine desktop/install/live-provider validation. |
 
----
+The [parity matrix](PARITY_MATRIX.md), [authentication sources](WINDOWS_AUTH_SOURCES.md), [build notes](BUILD.md) and [Windows verification backlog](WINDOWS_VERIFICATION.md) should be read with this report. “Fixture verified” applies only to the named test cases, never automatically to an entire provider.
 
-## 7. Gaps a reviewer should treat as open
+## Remediation and acceptance order
 
-Do **not** call this a fully complete Windows port until these are closed.
+1. Repair the actual WPF target/entry point and obtain a passing Windows build without hiding desktop source from compilation.
+2. Correct provider requests/auth formats using pinned reference fixtures; implement refresh persistence and account/cache isolation before live-account testing.
+3. Wire pricing and scanners with cross-source replay, unknown-cost and nested-log regressions.
+4. Finish dashboard/settings/customization and the Windows adaptations, including a safe mocked reset-credit flow.
+5. Implement installer/updater/CLI registration and real verification scripts; add reproducible dependency/tool configuration.
+6. Run native Windows integration/clean-machine acceptance and document fixture-tested versus live-tested companion versions separately.
 
-### Blocked without a Windows install / live companion
-
-1. Claude Desktop Chromium `v10` / DPAPI token cache
-2. Cursor `state.vscdb` values if Electron safeStorage-encrypted
-3. Codex Windows Credential Manager item (file `auth.json` only today)
-4. Antigravity Windows OAuth/keyring (port probe only)
-
-### Implemented in model/source, not product-complete
-
-5. Full WPF tray: left/right click, `Shell_NotifyIconGetRect`, mixed-DPI, Explorer restart
-6. Global hotkey, HKCU Run launch-at-login (marker file exists; registry write is Windows-host work)
-7. Quota toast notifications with baseline suppression
-8. Draggable always-on-top pin strip persistence
-9. Share-card PNG export
-10. Folder sync: watch, merge, disable-and-delete *this* device’s file
-11. Incremental JSONL disk cache (FNV identity, 35-day prune) — streaming reader exists; persisted scan store does not
-12. Self-contained Velopack `Setup.exe`, publisher signing, update feeds
-13. Translation of the large upstream Swift test suite (only a slice of contract/mapper tests exist)
-
-### Environment
-
-14. No Windows 11 x64 clean-machine run. See `docs/WINDOWS_VERIFICATION.md`.
-
----
-
-## 8. How to review the code
-
-On macOS/Linux (engine + CLI):
-
-```bash
-dotnet restore WinLLMUsage.sln
-dotnet test WinLLMUsage.sln -c Release
-dotnet run --project src/WinLLMUsage.Cli -- --help
-```
-
-On Windows 11 x64 (full product):
-
-```powershell
-pwsh ./scripts/build.ps1
-pwsh ./scripts/test.ps1
-pwsh ./scripts/package.ps1 -Runtime win-x64
-```
-
-Read first:
-
-1. `WINDOWS_IMPLEMENTATION_PLAN.md` — the spec this tree claims to follow
-2. `docs/PARITY_MATRIX.md` — feature-by-feature status
-3. `docs/WINDOWS_AUTH_SOURCES.md` — what was guessed vs proven
-4. `src/WinLLMUsage.Core/Serialization/LocalLimitsApi.cs` and `LocalUsageApi.cs` — public contracts
-5. `src/WinLLMUsage.Providers/Catalog/ProviderCatalog.cs` — composition order (Claude, Codex, Cursor, then alphabetical)
-
-Security notes for review:
-
-- Companion SQLite is opened **read-only**.
-- Logs go through `SecretRedactor`.
-- Local API is loopback-only and does not expose tokens; CORS is still `*` (upstream compatibility). Off switch: settings key `winllmusage.localApi.enabled`.
-
----
-
-## 9. License and branding
-
-- Upstream MIT copyright retained (`LICENSE`, Robin Ebers 2026).
-- Product name **WinLLMUsage**, package id `com.winllmusage.app`, data dir `%LOCALAPPDATA%\WinLLMUsage`.
-- OpenUsage trademarks/logo are not used (`docs/UPSTREAM_TRADEMARK.md`).
-- No GitHub Release and no production version were published from this work. Version remains `0.1.0-dev`.
+No production-ready or complete-port claim is justified until those gates pass. External access to a Windows interactive desktop or companion accounts is needed for final validation, but it is not needed to fix the source discrepancies identified here.

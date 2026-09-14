@@ -1,33 +1,36 @@
 # Parity matrix
 
-Statuses: `Not Started` | `Implemented` | `Fixture Verified` | `Windows Verified` | `Blocked`
+Reviewed revision: `ab983a4`, 14 September 2026. See [implementation review](IMPLEMENTATION_REPORT.md) for evidence and prioritized findings R1–R11.
 
-| Feature | Upstream source | Windows path | Status | Evidence |
-| --- | --- | --- | --- | --- |
-| Models / MetricLine / snapshots | `Sources/OpenUsage/Models/` | `src/WinLLMUsage.Core/Models/` | Fixture Verified | Core tests |
-| Limits schema `openusage.limits.v1` | `LocalLimitsAPI.swift` | `src/WinLLMUsage.Core/Serialization/LocalLimitsApi.cs` | Fixture Verified | `LocalLimitsApiTests` |
-| Legacy `/v1/usage` array | `LocalUsageAPI.swift` | `LocalUsageApi.cs` | Fixture Verified | Core tests |
-| CLI parse / exit codes | `OpenUsageCLI/` | `src/WinLLMUsage.Cli/Program.cs` | Fixture Verified | `CliArgumentsTests` |
-| Default layout / pins / v3 remaps | `DefaultLayout.swift`, `SettingsMigrator.swift` | `Layout/DefaultLayout.cs`, `Settings/SettingsMigrator.cs` | Fixture Verified | layout + migrator tests |
-| Claude mapper | `ClaudeUsageMapper.swift` | `Providers/Claude/ClaudeProvider.cs` | Fixture Verified | `ClaudeMapperTests` |
-| Codex mapper / plan names / reset credits | `CodexProvider.swift` | `Providers/Codex/CodexProvider.cs` | Fixture Verified | `CodexMapperTests` |
-| Cursor | `Providers/Cursor/` | `Providers/Cursor/CursorProvider.cs` | Implemented | mapper + SQLite read-only; Windows DPAPI/state.vscdb encryption **Blocked** until a live Windows Cursor install is inspected |
-| Antigravity | `Providers/Antigravity/` | `Providers/Antigravity/AntigravityProvider.cs` | Implemented | process/port discovery is best-effort; Windows OAuth/keyring **Blocked** |
-| Copilot | `Providers/Copilot/` | `Providers/Copilot/CopilotProvider.cs` | Implemented | `gh auth token` fallback; hosts.json paths listed in auth sources |
-| Devin | `Providers/Devin/` | `Providers/Devin/DevinProvider.cs` | Implemented | TOML credentials |
-| Grok | `Providers/Grok/` | `Providers/Grok/GrokProvider.cs` | Implemented | `.grok/auth.json` + JSONL scan |
-| Ollama | `Providers/Ollama/` | `Providers/Ollama/OllamaProvider.cs` | Implemented | Ed25519 via BouncyCastle; opt-in detection preserved |
-| OpenCode | `Providers/OpenCode/` | `Providers/OpenCode/OpenCodeProvider.cs` | Implemented | auth.json + read-only `opencode*.db` |
-| OpenRouter | `Providers/OpenRouter/` | `Providers/OpenRouter/OpenRouterProvider.cs` | Implemented | saved key / config / env |
-| Z.ai | `Providers/ZAI/` | `Providers/Zai/ZaiProvider.cs` | Implemented | saved key / `ZAI_API_KEY` / `GLM_API_KEY` |
-| JSONL scanner | `IncrementalJSONLScanner.swift` | `Infrastructure/Scanning/JsonlStreamingReader.cs` | Fixture Verified | 1 MiB skip test |
-| Snapshot cache TTL | `ProviderSnapshotCache.swift` | `Infrastructure/Cache/SnapshotCache.cs` | Implemented | GUI vs CLI freshness flags |
-| Local HTTP server :6736 | `LocalUsageServer.swift` | `Infrastructure/Api/LocalUsageServer.cs` | Implemented | loopback, 16-conn 503, CORS |
-| Folder history sync | iCloud stores | not a full watcher yet | Implemented (document model only) | `UsageHistoryDocument` validation; folder transport **Not Started** beyond model |
-| WPF tray dashboard | `App/` `Views/` | `src/WinLLMUsage.App/WindowsUi/` | Implemented (source) | **not Windows Verified**; macOS host is headless |
-| Velopack installer | Sparkle | `scripts/package.ps1` | Implemented (script skeleton) | unsigned; no production feed |
-| Claude Desktop DPAPI | Keychain AES-128-CBC | — | Blocked | format not inspected on Windows |
-| Codex Windows secure store | Keychain `Codex Auth` | file `auth.json` only | Blocked | undocumented Windows vault |
-| Cursor Electron safeStorage | macOS keychain + sqlite | sqlite keys only | Blocked | do not assume Electron DPAPI layout |
+Statuses: **Partial** = code exists but required behavior is missing/incorrect; **Selected fixtures pass** = only the named cases are tested; **Not implemented** = no working product path; **Blocked verification** = needs external Windows/companion evidence. No feature is marked Windows verified.
 
-Planned product-level adaptations from the implementation plan §3 (tray instead of menu-bar strip, DPAPI, folder sync instead of iCloud, Velopack, manual Privacy Mode) are accepted differences, not bugs.
+| Feature | Current implementation / evidence | Status | Review finding |
+| --- | --- | --- | --- |
+| Models, limits/usage serializers | Core types and selected `LocalLimitsApiTests`; not a complete wire-contract suite | Selected fixtures pass | Test evidence |
+| CLI parsing/layout/schema migration | CLI, layout and migrator tests | Selected fixtures pass | Test evidence |
+| Claude | One mapper test; file/env auth and basic scan; no Desktop/accounts/rotation persistence | Partial | R3–R5 |
+| Codex | Two mapper tests; usage/reset HTTP methods; incomplete logs/rotation/accounts | Partial | R3–R5, R9 |
+| Cursor | Read-only SQLite and basic RPC; stale-token retry, no complete REST/CSV path | Partial | R4 |
+| Antigravity | Hardcoded port probes and JSON scan; wrong RPC/storage protocol | Partial | R2, R3 |
+| Copilot | Editor-file/gh-token and basic usage code; no complete provider test coverage | Partial | Test evidence |
+| Devin | Candidate TOML/env source; reference fields and app fallback absent | Partial | R2 |
+| Grok | Basic auth/history; different billing endpoint and no token refresh | Partial | R2, R4 |
+| Ollama | Opt-in detection preserved; signature and payload differ from reference | Partial | R2, R8 |
+| OpenCode | Read-only database code; wrong API/auth shape, no Codex OAuth attribution | Partial | R2, R3 |
+| Z.ai | Different subscription endpoint/payload; quota endpoint missing | Partial | R2, R8 |
+| OpenRouter | Config/DPAPI/env loader and credit/key calls; no provider tests | Partial | Test evidence |
+| JSONL reader | Split-record and oversized-record tests; no persisted incremental scan cache | Selected fixtures pass | R3 |
+| Pricing | Embedded JSON/helper types; no active provider pricing integration | Partial | R3 |
+| Snapshots/refresh | Cache/TTL and coordinator; restart/account/concurrency defects | Partial | R5, R7 |
+| Local HTTP API | Custom loopback TCP server, CORS and serializer routes; no full network suite | Partial | Test evidence |
+| WPF dashboard/tray | Disconnected XAML/code-behind; confirmed Windows compile failure | Partial | R1 |
+| Settings/customization/privacy | Settings models; no complete product flow | Partial | R1, R10 |
+| Codex reset-credit claim | POST helper without confirmed-account UI/fresh-credit flow or transport tests | Partial | R9 |
+| Folder sync | History document types; transport/watch/merge absent | Not implemented | R10 |
+| Startup registration | Test exercises marker file only | Not implemented | R10 |
+| Global shortcut, notifications, floating strip, share cards | No connected product implementation | Not implemented | R10 |
+| Velopack installer/updater | ZIP publish script only; no vpk invocation | Not implemented | R6 |
+| Install verification | Prints instructions and always exits zero | Not implemented | R6 |
+| Desktop/Cursor/Codex/Antigravity encrypted credential sources | Exact Windows formats need evidence and adapters | Blocked verification | R2, R4 |
+
+Planned Windows adaptations are design decisions, not evidence of implementation. A passing mapper or serializer test does not establish a functioning provider. All 11 providers remain live-unverified.

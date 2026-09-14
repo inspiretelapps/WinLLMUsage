@@ -1,5 +1,7 @@
 # Build
 
+**Review status:** the Windows solution currently fails to build (reviewed revision `ab983a4`). The desktop target/entry point is incomplete. See [implementation review](IMPLEMENTATION_REPORT.md#r1--p1-the-application-does-not-build-on-windows-or-start-a-desktop-ui).
+
 Requires the .NET 10 SDK (pinned in `global.json` to 10.0.105, roll-forward latest feature).
 
 ## macOS / Linux (this workspace)
@@ -19,9 +21,11 @@ The headless app host:
 dotnet run --project src/WinLLMUsage.App
 ```
 
-WPF (`UseWPF`, tray icon, installer) needs Windows. A successful macOS build does **not** prove the tray UI.
+The project does not currently enable `UseWPF` or connect the tray/desktop lifecycle. A successful macOS build does **not** prove a functioning desktop application.
 
-## Windows 11 x64
+## Windows 11 x64 — target workflow, currently blocked
+
+The commands below describe the intended workflow. The tool manifest and package lock files are not checked in, the WPF build needs repair, packaging creates only a portable ZIP, and `verify-install.ps1` performs no assertions. They are not a verified end-to-end build/install path.
 
 ```powershell
 dotnet tool restore
