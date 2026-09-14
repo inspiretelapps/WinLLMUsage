@@ -1,3 +1,4 @@
+using System.Runtime.Versioning;
 using System.Security.Cryptography;
 using WinLLMUsage.Core.Contracts;
 using WinLLMUsage.Infrastructure.Secrets;
@@ -10,14 +11,7 @@ public sealed class DpapiSecretStore : ISecretStore
 
     public DpapiSecretStore(string directory)
     {
-        _inner = new FileSecretStore(
-            directory,
-            bytes => OperatingSystem.IsWindows()
-                ? ProtectedData.Protect(bytes, null, DataProtectionScope.CurrentUser)
-                : bytes,
-            bytes => OperatingSystem.IsWindows()
-                ? ProtectedData.Unprotect(bytes, null, DataProtectionScope.CurrentUser)
-                : bytes);
+        _inner = new FileSecretStore(directory, Protect, Unprotect);
     }
 
     public Task<byte[]?> UnprotectAsync(string name, CancellationToken cancellationToken) =>
@@ -28,4 +22,32 @@ public sealed class DpapiSecretStore : ISecretStore
 
     public Task DeleteAsync(string name, CancellationToken cancellationToken) =>
         _inner.DeleteAsync(name, cancellationToken);
+
+    private static byte[] Protect(byte[] plaintext)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return ProtectWindows(plaintext);
+        }
+
+        return plaintext;
+    }
+
+    private static byte[] Unprotect(byte[] data)
+    {
+        if (OperatingSystem.IsWindows())
+        {
+            return UnprotectWindows(data);
+        }
+
+        return data;
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static byte[] ProtectWindows(byte[] plaintext) =>
+        ProtectedData.Protect(plaintext, null, DataProtectionScope.CurrentUser);
+
+    [SupportedOSPlatform("windows")]
+    private static byte[] UnprotectWindows(byte[] data) =>
+        ProtectedData.Unprotect(data, null, DataProtectionScope.CurrentUser);
 }

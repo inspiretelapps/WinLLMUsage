@@ -1,3 +1,5 @@
+using System.Runtime.Versioning;
+
 namespace WinLLMUsage.Windows;
 
 public static class StartupRegistration
@@ -6,46 +8,22 @@ public static class StartupRegistration
 
     public static bool IsEnabled(string? markerPath = null)
     {
-#if WINDOWS
-        try
+        if (OperatingSystem.IsWindows())
         {
-            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", false);
-            if (key?.GetValue(ValueName) is string)
-            {
-                return true;
-            }
+            return IsEnabledOnWindows();
         }
-        catch (Exception)
-        {
-        }
-#endif
+
         return File.Exists(markerPath ?? DefaultMarker());
     }
 
     public static void SetEnabled(bool enabled, string launcherPath, string? markerPath = null)
     {
-#if WINDOWS
-        try
+        if (OperatingSystem.IsWindows())
         {
-            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
-            if (key is not null)
-            {
-                if (enabled)
-                {
-                    key.SetValue(ValueName, $"\"{launcherPath}\"");
-                }
-                else if (key.GetValue(ValueName) is not null)
-                {
-                    key.DeleteValue(ValueName);
-                }
+            SetEnabledOnWindows(enabled, launcherPath);
+            return;
+        }
 
-                return;
-            }
-        }
-        catch (Exception)
-        {
-        }
-#endif
         var path = markerPath ?? DefaultMarker();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         if (enabled)
@@ -55,6 +33,45 @@ public static class StartupRegistration
         else if (File.Exists(path))
         {
             File.Delete(path);
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static bool IsEnabledOnWindows()
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", false);
+            return key?.GetValue(ValueName) is string;
+        }
+        catch (Exception)
+        {
+            return File.Exists(DefaultMarker());
+        }
+    }
+
+    [SupportedOSPlatform("windows")]
+    private static void SetEnabledOnWindows(bool enabled, string launcherPath)
+    {
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
+            if (key is null)
+            {
+                return;
+            }
+
+            if (enabled)
+            {
+                key.SetValue(ValueName, $"\"{launcherPath}\"");
+            }
+            else if (key.GetValue(ValueName) is not null)
+            {
+                key.DeleteValue(ValueName);
+            }
+        }
+        catch (Exception)
+        {
         }
     }
 
