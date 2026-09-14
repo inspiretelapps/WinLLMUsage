@@ -4,7 +4,9 @@
 **Date:** 14 September 2026  
 **Workspace:** `/Users/jaco/codex/winllmusage`  
 **Version in tree:** `0.1.0-dev`  
-**Verdict:** implemented engine, CLI, local API, and all 11 provider pipelines; **not Windows-verified**. No GitHub repository existed at the start of this report; one is created as part of publishing this tree.
+**GitHub (private):** https://github.com/inspiretelapps/WinLLMUsage  
+**Commit:** `c8cd18f` (`main`)  
+**Verdict:** implemented engine, CLI, local API, and all 11 provider pipelines; **not Windows-verified**. No GitHub repository existed before this report; `inspiretelapps/WinLLMUsage` was created and pushed as a **private** repo.
 
 ---
 

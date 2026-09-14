@@ -6,6 +6,9 @@ WinLLMUsage is a tray / CLI utility that reads local AI-tool credentials and sho
 
 This is a **development** tree (`0.1.0-dev`). It is **implemented but not Windows verified** from this macOS workspace. See `docs/WINDOWS_VERIFICATION.md`.
 
+**Review packet:** [docs/IMPLEMENTATION_REPORT.md](docs/IMPLEMENTATION_REPORT.md)  
+**Repository:** https://github.com/inspiretelapps/WinLLMUsage (private)
+
 ## Layout
 
 - `src/WinLLMUsage.Core` — models, limits/usage serializers, layout, pricing, pacing
