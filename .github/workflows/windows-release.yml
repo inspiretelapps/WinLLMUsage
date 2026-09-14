@@ -38,9 +38,13 @@ jobs:
 
           SmartScreen may warn because this build is not Authenticode-signed.
           "@
-          $files = Get-ChildItem artifacts -Recurse -Include *.zip,*.exe,*.sha256 | ForEach-Object { $_.FullName }
-          if (-not $files) { throw "No release artifacts were produced." }
-          $existing = gh release view $tag 2>$null
+          $files = @(
+            Get-ChildItem artifacts -File | Where-Object { $_.Name -match '^WinLLMUsage-0\.7\.0-win-x64-(Setup\.exe|portable\.zip)(\.sha256)?$' }
+          ) | ForEach-Object { $_.FullName }
+          if (-not $files -or $files.Count -eq 0) { throw "No release artifacts were produced." }
+          Write-Host "Uploading:"
+          $files | ForEach-Object { Write-Host $_ }
+          gh release view $tag 2>$null
           if ($LASTEXITCODE -eq 0) {
             gh release upload $tag @files --clobber
           } else {
