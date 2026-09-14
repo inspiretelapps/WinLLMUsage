@@ -1,9 +1,24 @@
 #!/usr/bin/env pwsh
 $ErrorActionPreference = "Stop"
-Write-Host "verify-install.ps1 must run on a clean Windows 11 x64 machine after package.ps1."
-Write-Host "Checks: Setup.exe / portable zip launch, second-instance activation, CLI on PATH, uninstall leaves provider data."
+$PSNativeCommandUseErrorActionPreference = $true
 if (-not $IsWindows) {
-    Write-Host "SKIPPED: not Windows. See docs/WINDOWS_VERIFICATION.md."
+    Write-Host "SKIPPED: verify-install.ps1 requires Windows 11 x64."
     exit 0
 }
-exit 0
+
+$root = Resolve-Path "$PSScriptRoot/.."
+$zip = Get-ChildItem "$root/artifacts" -Filter "WinLLMUsage-*-portable.zip" | Select-Object -First 1
+if (-not $zip) {
+    throw "No portable ZIP found. Run scripts/package.ps1 first."
+}
+
+$cli = Get-ChildItem "$root/artifacts" -Recurse -Filter "winllmusage.exe" | Select-Object -First 1
+if (-not $cli) {
+    throw "winllmusage.exe was not published."
+}
+
+& $cli.FullName --help | Out-Host
+if ($LASTEXITCODE -ne 0) { throw "CLI --help failed" }
+& $cli.FullName -v | Out-Host
+if ($LASTEXITCODE -ne 0) { throw "CLI -v failed" }
+Write-Host "CLI launcher is present and responds."

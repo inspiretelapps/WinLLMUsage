@@ -12,6 +12,8 @@ namespace WinLLMUsage.Providers.Devin;
 
 public sealed class DevinProvider : IProviderRuntime
 {
+    public const string DefaultApiServer = "https://server.codeium.com";
+
     private readonly IHttpTransport _http;
     private readonly AppPaths _paths;
     private readonly IClock _clock;
@@ -29,25 +31,24 @@ public sealed class DevinProvider : IProviderRuntime
     public IReadOnlyList<WidgetDescriptor> WidgetDescriptors { get; }
 
     public Task<bool> HasLocalCredentialsAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(FindCredentials() is not null);
+        Task.FromResult(LoadAuth() is not null);
 
     public async Task<ProviderSnapshot> RefreshAsync(bool isManual, CancellationToken cancellationToken)
     {
-        var token = FindCredentials();
-        if (token is null)
+        var auth = LoadAuth();
+        if (auth is null)
         {
-            return ProviderSnapshot.Error(Provider, "Devin credentials were not found.", ErrorCategory.NotLoggedIn);
+            return ProviderSnapshot.Error(Provider, "Run devin auth login or sign in to Devin and try again.", ErrorCategory.NotLoggedIn);
         }
 
         var headers = new Dictionary<string, string>
         {
-            ["Authorization"] = "Bearer " + token,
+            ["Authorization"] = "Bearer " + auth.Value.ApiKey,
             ["Accept"] = "application/json",
             ["Content-Type"] = "application/json",
         };
-        var response = await _http.SendAsync(
-            JsonRequest.PostJson("https://api.devin.ai/ada/GetUserStatus", "{}", headers, TimeSpan.FromSeconds(15)),
-            cancellationToken).ConfigureAwait(false);
+        var url = auth.Value.Server.TrimEnd('/') + "/exa.seat_management_pb.SeatManagementService/GetUserStatus";
+        var response = await _http.SendAsync(JsonRequest.PostJson(url, "{}", headers, TimeSpan.FromSeconds(15)), cancellationToken).ConfigureAwait(false);
         if (!response.IsSuccess)
         {
             return ProviderSnapshot.Error(Provider, $"Devin status request failed ({response.Status}).", ProviderAuthRetry.Classify(response.Status));
@@ -64,7 +65,11 @@ public sealed class DevinProvider : IProviderRuntime
             lines.Add(MetricLine.Values("Extra usage balance", [new MetricValue(balance, MetricKind.Dollars)]));
         }
 
-        MetricLine.AppendNoDataIfNeeded(lines);
+        if (lines.Count == 0)
+        {
+            return ProviderSnapshot.Error(Provider, "Devin status response could not be mapped.", ErrorCategory.Decoding);
+        }
+
         return ProviderSnapshot.Make(Provider, root.GetString("plan", "plan_name"), lines, _clock.Now);
     }
 
@@ -83,32 +88,77 @@ public sealed class DevinProvider : IProviderRuntime
             used = 100 - left;
         }
 
-        lines.Add(MetricLine.Progress(label, used ?? 0, 100, ProgressFormat.Percent, Iso8601.DateFrom(window.Value.GetString("resets_at", "resetsAt"))));
+        if (used is null)
+        {
+            return;
+        }
+
+        lines.Add(MetricLine.Progress(label, used.Value, 100, ProgressFormat.Percent, Iso8601.DateFrom(window.Value.GetString("resets_at", "resetsAt"))));
     }
 
-    private string? FindCredentials()
+    private (string ApiKey, string Server)? LoadAuth()
     {
-        var toml = Path.Combine(_paths.UserProfile, ".devin", "credentials.toml");
-        if (File.Exists(toml))
+        var tomlCandidates = new[]
         {
+            Path.Combine(_paths.UserProfile, ".local", "share", "devin", "credentials.toml"),
+            Path.Combine(_paths.UserProfile, ".devin", "credentials.toml"),
+        };
+        foreach (var toml in tomlCandidates)
+        {
+            if (!File.Exists(toml))
+            {
+                continue;
+            }
+
             try
             {
-                var model = Toml.ToModel(File.ReadAllText(toml));
-                if (model.TryGetValue("token", out var token) && token is string text && !string.IsNullOrWhiteSpace(text))
+                var text = File.ReadAllText(toml);
+                var key = ReadToml(text, "windsurf_api_key") ?? ReadToml(text, "api_key");
+                if (string.IsNullOrWhiteSpace(key))
                 {
-                    return text;
+                    continue;
                 }
 
-                if (model.TryGetValue("api_key", out var key) && key is string api && !string.IsNullOrWhiteSpace(api))
+                var server = ReadToml(text, "api_server_url");
+                if (server is not null && !server.StartsWith("https://", StringComparison.Ordinal))
                 {
-                    return api;
+                    server = null;
                 }
+
+                return (key, string.IsNullOrWhiteSpace(server) ? DefaultApiServer : server.TrimEnd('/'));
             }
             catch (Exception)
             {
             }
         }
 
-        return Environment.GetEnvironmentVariable("DEVIN_API_KEY");
+        var env = Environment.GetEnvironmentVariable("DEVIN_API_KEY");
+        return string.IsNullOrWhiteSpace(env) ? null : (env, DefaultApiServer);
+    }
+
+    private static string? ReadToml(string text, string key)
+    {
+        try
+        {
+            var model = Toml.ToModel(text);
+            if (model.TryGetValue(key, out var value) && value is string s && !string.IsNullOrWhiteSpace(s))
+            {
+                return s.Trim();
+            }
+        }
+        catch (Exception)
+        {
+        }
+
+        foreach (var line in text.Split('\n'))
+        {
+            var parts = line.Split('=', 2);
+            if (parts.Length == 2 && parts[0].Trim() == key)
+            {
+                return parts[1].Trim().Trim('"');
+            }
+        }
+
+        return null;
     }
 }

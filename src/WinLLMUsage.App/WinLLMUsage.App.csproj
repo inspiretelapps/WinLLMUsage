@@ -1,22 +1,37 @@
 <Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
-    <OutputType>Exe</OutputType>
-    <TargetFramework>net10.0</TargetFramework>
     <RootNamespace>WinLLMUsage.App</RootNamespace>
     <AssemblyName>WinLLMUsage</AssemblyName>
+    <EnableDefaultApplicationDefinition>false</EnableDefaultApplicationDefinition>
   </PropertyGroup>
+
+  <PropertyGroup Condition="$([MSBuild]::IsOSPlatform('Windows'))">
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+    <DefineConstants>$(DefineConstants);WINDOWS_APP</DefineConstants>
+    <StartupObject>WinLLMUsage.App.Program</StartupObject>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <StartupObject>WinLLMUsage.App.Program</StartupObject>
+  </PropertyGroup>
+
   <ItemGroup>
+    <ProjectReference Include="..\WinLLMUsage.Host\WinLLMUsage.Host.csproj" />
     <ProjectReference Include="..\WinLLMUsage.Core\WinLLMUsage.Core.csproj" />
-    <ProjectReference Include="..\WinLLMUsage.Providers\WinLLMUsage.Providers.csproj" />
-    <ProjectReference Include="..\WinLLMUsage.Infrastructure\WinLLMUsage.Infrastructure.csproj" />
     <ProjectReference Include="..\WinLLMUsage.Windows\WinLLMUsage.Windows.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="CommunityToolkit.Mvvm" />
     <PackageReference Include="Microsoft.Extensions.Hosting" />
   </ItemGroup>
-  <ItemGroup>
+  <ItemGroup Condition="!$([MSBuild]::IsOSPlatform('Windows'))">
+    <Compile Remove="WindowsUi\**" />
     <Page Remove="WindowsUi\**" />
-    <None Include="WindowsUi\**" CopyToOutputDirectory="Never" />
+    <None Include="WindowsUi\**" />
   </ItemGroup>
 </Project>

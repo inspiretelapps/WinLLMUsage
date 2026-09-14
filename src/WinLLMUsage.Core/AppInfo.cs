@@ -4,7 +4,7 @@ namespace WinLLMUsage.Core;
 public static class AppInfo
 {
     public const string ProductName = "WinLLMUsage";
-    public const string Version = "0.1.0-dev";
+    public const string Version = "0.7.0";
     public const string PackageId = "com.winllmusage.app";
     public const string DataDirectoryName = "WinLLMUsage";
     public const string UpstreamOrigin = "OpenUsage v0.7.11 (https://github.com/robinebers/openusage)";

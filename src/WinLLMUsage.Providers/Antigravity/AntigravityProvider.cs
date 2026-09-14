@@ -1,19 +1,18 @@
 using System.Diagnostics;
-using System.Net.Sockets;
 using System.Text.Json;
 using WinLLMUsage.Core.Catalog;
 using WinLLMUsage.Core.Contracts;
-using WinLLMUsage.Core.History;
 using WinLLMUsage.Core.Models;
-using WinLLMUsage.Core.Time;
 using WinLLMUsage.Infrastructure.Paths;
 using WinLLMUsage.Providers.Http;
-using WinLLMUsage.Providers.Shared;
 
 namespace WinLLMUsage.Providers.Antigravity;
 
 public sealed class AntigravityProvider : IProviderRuntime
 {
+    public const string LsService = "exa.language_server_pb.LanguageServerService";
+    public const string QuotaMethod = "RetrieveUserQuotaSummary";
+
     private readonly IHttpTransport _http;
     private readonly AppPaths _paths;
     private readonly IClock _clock;
@@ -31,25 +30,36 @@ public sealed class AntigravityProvider : IProviderRuntime
     public IReadOnlyList<WidgetDescriptor> WidgetDescriptors { get; }
 
     public Task<bool> HasLocalCredentialsAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(DiscoverPort() is not null || Directory.Exists(Path.Combine(_paths.UserProfile, ".gemini")));
+        Task.FromResult(DiscoverEndpoint() is not null || Directory.Exists(Path.Combine(_paths.UserProfile, ".gemini")));
 
     public async Task<ProviderSnapshot> RefreshAsync(bool isManual, CancellationToken cancellationToken)
     {
-        var port = DiscoverPort();
-        if (port is null)
+        var endpoint = DiscoverEndpoint();
+        if (endpoint is null)
         {
             return ProviderSnapshot.Error(Provider, "Antigravity language server is not running.", ErrorCategory.NotAvailable);
         }
 
-        var url = $"https://127.0.0.1:{port}/quota-summary";
+        var url = $"{endpoint.Value.Scheme}://127.0.0.1:{endpoint.Value.Port}/{LsService}/{QuotaMethod}";
+        var body = JsonSerializer.Serialize(new { metadata = new { ideName = "antigravity", extensionName = "antigravity", ideVersion = "unknown", locale = "en" } });
+        var headers = new Dictionary<string, string>
+        {
+            ["Content-Type"] = "application/json",
+            ["Connect-Protocol-Version"] = "1",
+        };
+        if (!string.IsNullOrWhiteSpace(endpoint.Value.Csrf))
+        {
+            headers["x-codeium-csrf-token"] = endpoint.Value.Csrf;
+        }
+
         HttpResponse response;
         try
         {
-            response = await _http.SendAsync(new HttpRequest(HttpMethod.Get, new Uri(url), new Dictionary<string, string> { ["Accept"] = "application/json" }, Timeout: TimeSpan.FromSeconds(10), BypassProxy: true), cancellationToken).ConfigureAwait(false);
+            response = await _http.SendAsync(JsonRequest.PostJson(url, body, headers, TimeSpan.FromSeconds(10)), cancellationToken).ConfigureAwait(false);
         }
         catch (Exception)
         {
-            return ProviderSnapshot.Error(Provider, "Could not reach the Antigravity local quota endpoint.", ErrorCategory.Network);
+            return ProviderSnapshot.Error(Provider, "Could not reach the Antigravity language server.", ErrorCategory.Network);
         }
 
         if (!response.IsSuccess)
@@ -57,49 +67,40 @@ public sealed class AntigravityProvider : IProviderRuntime
             return ProviderSnapshot.Error(Provider, $"Antigravity quota request failed ({response.Status}).", ProviderAuthRetry.Classify(response.Status));
         }
 
-        using var doc = JsonDocument.Parse(response.Body);
-        var root = doc.RootElement;
-        var lines = new List<MetricLine>();
-        AddPool(root, "gemini", "Session", "Weekly", "geminiPro", "geminiWeekly", lines);
-        AddPool(root, "claude", "Claude", "Claude Weekly", "nonGemini", "nonGeminiWeekly", lines);
-        var history = ScanConversations();
-        lines.AddRange(SpendTileMapper.Lines(history, _clock.Now, TimeZoneInfo.Local, estimated: true, SpendTileMapper.Trend(history, _clock.Now, TimeZoneInfo.Local), "From your Antigravity conversations (estimated)"));
-        MetricLine.AppendNoDataIfNeeded(lines);
-        return ProviderSnapshot.Make(Provider, root.GetString("plan"), lines, _clock.Now, history);
-    }
-
-    private static void AddPool(JsonElement root, string key, string sessionLabel, string weeklyLabel, string _, string __, List<MetricLine> lines)
-    {
-        var pool = root.GetObject(key) ?? root.GetObject(key + "Pool");
-        if (pool is null)
+        var lines = AntigravityUsageMapper.ParseQuotaSummary(response.Text);
+        if (lines is null)
         {
-            return;
+            return ProviderSnapshot.Error(Provider, "Antigravity quota summary could not be mapped.", ErrorCategory.Decoding);
         }
 
-        var session = pool.Value.GetObject("session") ?? pool.Value;
-        var weekly = pool.Value.GetObject("weekly");
-        var sessionUsed = session.GetDouble("used", "percent", "utilization") ?? 0;
-        lines.Add(MetricLine.Progress(sessionLabel, sessionUsed, 100, ProgressFormat.Percent, Iso8601.DateFrom(session.GetString("resets_at", "resetsAt")), MetricPeriod.SessionMs));
-        if (weekly is { } week)
-        {
-            var weeklyUsed = week.GetDouble("used", "percent", "utilization") ?? 0;
-            lines.Add(MetricLine.Progress(weeklyLabel, weeklyUsed, 100, ProgressFormat.Percent, Iso8601.DateFrom(week.GetString("resets_at", "resetsAt")), MetricPeriod.WeekMs));
-        }
+        MetricLine.AppendNoDataIfNeeded(lines as List<MetricLine> ?? lines.ToList());
+        var snapshotLines = lines.Count == 0 ? new List<MetricLine> { MetricLine.NoUsageData } : lines.ToList();
+        return ProviderSnapshot.Make(Provider, null, snapshotLines, _clock.Now);
     }
 
-    private int? DiscoverPort()
+    private (string Scheme, int Port, string? Csrf)? DiscoverEndpoint()
     {
         foreach (var process in Process.GetProcesses())
         {
             try
             {
-                if (process.ProcessName.Contains("language_server", StringComparison.OrdinalIgnoreCase)
-                    || process.ProcessName.Contains("agy", StringComparison.OrdinalIgnoreCase)
-                    || process.ProcessName.Contains("antigravity", StringComparison.OrdinalIgnoreCase))
+                if (!process.ProcessName.Contains("language_server", StringComparison.OrdinalIgnoreCase)
+                    && !process.ProcessName.Contains("antigravity", StringComparison.OrdinalIgnoreCase)
+                    && !process.ProcessName.Contains("agy", StringComparison.OrdinalIgnoreCase))
                 {
-                    // Marker arguments are not available without querying the command line.
-                    // Probe common loopback ports used by the language server.
+                    continue;
                 }
+
+                var args = process.StartInfo.Arguments;
+                var port = ParseArg(args, "--port") ?? ParseArg(Environment.CommandLine, "--port");
+                var csrf = ParseNamed(args, "--csrf_token") ?? ParseNamed(args, "--csrf");
+                if (port is { } p)
+                {
+                    return ("https", p, csrf);
+                }
+            }
+            catch (Exception)
+            {
             }
             finally
             {
@@ -107,65 +108,41 @@ public sealed class AntigravityProvider : IProviderRuntime
             }
         }
 
-        foreach (var port in new[] { 43431, 43432, 43433, 8080, 8000 })
-        {
-            if (CanConnect(port))
-            {
-                return port;
-            }
-        }
-
         return null;
     }
 
-    private static bool CanConnect(int port)
+    private static int? ParseArg(string? text, string name)
     {
-        try
+        if (string.IsNullOrEmpty(text))
         {
-            using var client = new TcpClient();
-            var task = client.ConnectAsync(System.Net.IPAddress.Loopback, port);
-            return task.Wait(TimeSpan.FromMilliseconds(150)) && client.Connected;
+            return null;
         }
-        catch (Exception)
+
+        var marker = name + "=";
+        var index = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
         {
-            return false;
+            return null;
         }
+
+        var rest = text[(index + marker.Length)..].Split(' ', 2)[0];
+        return int.TryParse(rest, out var port) ? port : null;
     }
 
-    private ProviderUsageHistory? ScanConversations()
+    private static string? ParseNamed(string? text, string name)
     {
-        var roots = new[]
+        if (string.IsNullOrEmpty(text))
         {
-            Path.Combine(_paths.UserProfile, ".gemini", "antigravity", "conversations"),
-            Path.Combine(_paths.UserProfile, ".gemini", "antigravity", "conversations"),
-        };
-        var byDay = new Dictionary<string, (long Tokens, double Cost)>(StringComparer.Ordinal);
-        foreach (var root in roots.Distinct(StringComparer.OrdinalIgnoreCase))
-        {
-            if (!Directory.Exists(root))
-            {
-                continue;
-            }
-
-            foreach (var file in Directory.EnumerateFiles(root, "*.json", SearchOption.AllDirectories))
-            {
-                try
-                {
-                    using var doc = JsonDocument.Parse(File.ReadAllText(file));
-                    var tokens = doc.RootElement.GetInt64("total_tokens", "tokens") ?? 0;
-                    var stamp = Iso8601.DateFrom(doc.RootElement.GetString("updated_at", "created_at")) ?? File.GetLastWriteTimeUtc(file);
-                    var day = UsageHistoryDocument.FormatDay(stamp, TimeZoneInfo.Local);
-                    byDay.TryGetValue(day, out var existing);
-                    byDay[day] = (existing.Tokens + tokens, existing.Cost);
-                }
-                catch (Exception)
-                {
-                }
-            }
+            return null;
         }
 
-        return byDay.Count == 0
-            ? null
-            : new ProviderUsageHistory(new DailyUsageSeries(byDay.Select(kv => new DailyUsageEntry(kv.Key, kv.Value.Tokens, kv.Value.Cost)).OrderBy(d => d.Date).ToArray()));
+        var marker = name + "=";
+        var index = text.IndexOf(marker, StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+        {
+            return null;
+        }
+
+        return text[(index + marker.Length)..].Split(' ', 2)[0];
     }
 }

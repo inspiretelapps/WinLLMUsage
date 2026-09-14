@@ -1,18 +1,51 @@
 namespace WinLLMUsage.Windows;
 
-/// <summary>
-/// Per-user launch-at-login. On Windows the WPF host writes HKCU\...\Run; this helper
-/// is the cross-platform fallback used by tests and the CLI.
-/// </summary>
 public static class StartupRegistration
 {
     public const string ValueName = "WinLLMUsage";
 
-    public static bool IsEnabled(string? markerPath = null) =>
-        File.Exists(markerPath ?? DefaultMarker());
+    public static bool IsEnabled(string? markerPath = null)
+    {
+#if WINDOWS
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", false);
+            if (key?.GetValue(ValueName) is string)
+            {
+                return true;
+            }
+        }
+        catch (Exception)
+        {
+        }
+#endif
+        return File.Exists(markerPath ?? DefaultMarker());
+    }
 
     public static void SetEnabled(bool enabled, string launcherPath, string? markerPath = null)
     {
+#if WINDOWS
+        try
+        {
+            using var key = Microsoft.Win32.Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Run", true);
+            if (key is not null)
+            {
+                if (enabled)
+                {
+                    key.SetValue(ValueName, $"\"{launcherPath}\"");
+                }
+                else if (key.GetValue(ValueName) is not null)
+                {
+                    key.DeleteValue(ValueName);
+                }
+
+                return;
+            }
+        }
+        catch (Exception)
+        {
+        }
+#endif
         var path = markerPath ?? DefaultMarker();
         Directory.CreateDirectory(Path.GetDirectoryName(path)!);
         if (enabled)

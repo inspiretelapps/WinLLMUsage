@@ -7,10 +7,8 @@
     <ToolCommandName>winllmusage</ToolCommandName>
   </PropertyGroup>
   <ItemGroup>
+    <ProjectReference Include="..\WinLLMUsage.Host\WinLLMUsage.Host.csproj" />
     <ProjectReference Include="..\WinLLMUsage.Core\WinLLMUsage.Core.csproj" />
-    <ProjectReference Include="..\WinLLMUsage.Providers\WinLLMUsage.Providers.csproj" />
-    <ProjectReference Include="..\WinLLMUsage.Infrastructure\WinLLMUsage.Infrastructure.csproj" />
-    <ProjectReference Include="..\WinLLMUsage.Windows\WinLLMUsage.Windows.csproj" />
   </ItemGroup>
   <ItemGroup>
     <PackageReference Include="Microsoft.Extensions.Hosting" />

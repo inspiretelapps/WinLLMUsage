@@ -15,6 +15,7 @@ public static partial class SecretRedactor
         var redacted = BearerRegex().Replace(value, "$1[REDACTED]");
         redacted = KeyRegex().Replace(redacted, "$1[REDACTED]");
         redacted = TokenJsonRegex().Replace(redacted, "$1\"[REDACTED]\"");
+        redacted = AuthorizationHeaderRegex().Replace(redacted, "$1[REDACTED]");
         return redacted;
     }
 
@@ -26,6 +27,9 @@ public static partial class SecretRedactor
 
     [GeneratedRegex(@"(""(?:access_token|refresh_token|apiKey|api_key|id_token|password)""\s*:\s*)""[^""]*""", RegexOptions.IgnoreCase)]
     private static partial Regex TokenJsonRegex();
+
+    [GeneratedRegex(@"(Authorization:\s*)\S+", RegexOptions.IgnoreCase)]
+    private static partial Regex AuthorizationHeaderRegex();
 }
 
 public sealed class FileLoggerProvider : ILoggerProvider

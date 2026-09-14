@@ -15,6 +15,7 @@ public sealed class CursorProvider : IProviderRuntime
     private readonly IHttpTransport _http;
     private readonly AppPaths _paths;
     private readonly IClock _clock;
+    private string? _accessToken;
 
     public CursorProvider(IHttpTransport http, AppPaths paths, IClock clock)
     {
@@ -33,7 +34,7 @@ public sealed class CursorProvider : IProviderRuntime
 
     public async Task<ProviderSnapshot> RefreshAsync(bool isManual, CancellationToken cancellationToken)
     {
-        var access = ReadStateValue("cursorAuth/accessToken");
+        var access = _accessToken ?? ReadStateValue("cursorAuth/accessToken");
         if (string.IsNullOrWhiteSpace(access))
         {
             return ProviderSnapshot.Error(Provider, "Cursor is not signed in on this machine.", ErrorCategory.NotLoggedIn);
@@ -119,7 +120,20 @@ public sealed class CursorProvider : IProviderRuntime
         var response = await _http.SendAsync(
             JsonRequest.PostJson("https://api2.cursor.sh/oauth/token", body, new Dictionary<string, string> { ["Content-Type"] = "application/json" }, TimeSpan.FromSeconds(15)),
             cancellationToken).ConfigureAwait(false);
-        return response.IsSuccess;
+        if (!response.IsSuccess)
+        {
+            return false;
+        }
+
+        using var doc = JsonDocument.Parse(response.Body);
+        var access = doc.RootElement.GetString("access_token", "accessToken");
+        if (string.IsNullOrWhiteSpace(access))
+        {
+            return false;
+        }
+
+        _accessToken = access;
+        return true;
     }
 
     private string? ReadStateValue(string key)

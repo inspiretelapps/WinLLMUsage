@@ -1,7 +1,5 @@
 # Release
 
-Development version: `0.1.0-dev`. Do not publish a GitHub release or invent a public version from this tree.
+Current version: **0.7.0**.
 
-Unsigned development artifacts must be labelled unsigned. Production distribution needs the owner's code-signing certificate and a real Velopack feed URL; those secrets are not in the repository.
-
-Stable/beta feeds stay hidden until configured.
+GitHub Releases ship an unsigned Windows x64 Velopack `Setup.exe` and a portable ZIP. SmartScreen may warn until a publisher certificate is configured. Production update feeds stay disabled until a real feed URL is set.

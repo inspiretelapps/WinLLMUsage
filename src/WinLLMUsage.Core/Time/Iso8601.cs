@@ -42,6 +42,11 @@ public static partial class Iso8601
 
     public static DateTimeOffset? FromUnix(double epoch)
     {
+        if (!double.IsFinite(epoch))
+        {
+            return null;
+        }
+
         // Swift: seconds if |n| < 1e10 else milliseconds.
         var seconds = Math.Abs(epoch) < 10_000_000_000d ? epoch : epoch / 1000d;
         try

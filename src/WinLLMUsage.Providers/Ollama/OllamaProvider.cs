@@ -1,15 +1,10 @@
-using System.Text;
-using System.Text.Json;
 using Org.BouncyCastle.Crypto.Parameters;
-using Org.BouncyCastle.Crypto.Signers;
 using Org.BouncyCastle.OpenSsl;
 using WinLLMUsage.Core.Catalog;
 using WinLLMUsage.Core.Contracts;
 using WinLLMUsage.Core.Models;
-using WinLLMUsage.Core.Time;
 using WinLLMUsage.Infrastructure.Paths;
 using WinLLMUsage.Providers.Http;
-using WinLLMUsage.Providers.Shared;
 
 namespace WinLLMUsage.Providers.Ollama;
 
@@ -32,7 +27,7 @@ public sealed class OllamaProvider : IProviderRuntime
     public IReadOnlyList<WidgetDescriptor> WidgetDescriptors { get; }
 
     public Task<bool> HasLocalCredentialsAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(false); // Ollama is explicitly opt-in.
+        Task.FromResult(false);
 
     public async Task<ProviderSnapshot> RefreshAsync(bool isManual, CancellationToken cancellationToken)
     {
@@ -48,7 +43,6 @@ public sealed class OllamaProvider : IProviderRuntime
             using var reader = File.OpenText(keyPath);
             var pem = new PemReader(reader).ReadObject();
             privateKey = pem as Ed25519PrivateKeyParameters
-                         ?? (pem as Ed25519PrivateKeyParameters)
                          ?? throw new InvalidDataException("Not an Ed25519 OpenSSH key.");
         }
         catch (Exception)
@@ -56,49 +50,61 @@ public sealed class OllamaProvider : IProviderRuntime
             return ProviderSnapshot.Error(Provider, "Could not parse the Ollama Ed25519 key.", ErrorCategory.Decoding);
         }
 
-        var usage = await SignedGetAsync(privateKey, "https://ollama.com/api/usage", cancellationToken).ConfigureAwait(false);
+        var usage = await SignedAsync(privateKey, "GET", "/api/usage", cancellationToken).ConfigureAwait(false);
+        if (usage.Status is 401 or 403)
+        {
+            return ProviderSnapshot.Error(Provider, "Ollama Cloud is not signed in on this machine.", ErrorCategory.NotLoggedIn);
+        }
+
         if (!usage.IsSuccess)
         {
             return ProviderSnapshot.Error(Provider, $"Ollama usage request failed ({usage.Status}).", ProviderAuthRetry.Classify(usage.Status));
         }
 
-        using var doc = JsonDocument.Parse(usage.Body);
-        var root = doc.RootElement;
-        var lines = new List<MetricLine>();
-        AddPercent(root, "session", "Session", lines);
-        AddPercent(root, "weekly", "Weekly", lines);
-        var spent = root.GetDouble("last_4_weeks", "last4Weeks", "additional_charges") ?? 0;
-        lines.Add(MetricLine.Values("Last 4 Weeks", [new MetricValue(spent, MetricKind.Dollars)]));
-        MetricLine.AppendNoDataIfNeeded(lines);
-        return ProviderSnapshot.Make(Provider, root.GetString("plan"), lines, _clock.Now);
-    }
-
-    private static void AddPercent(JsonElement root, string key, string label, List<MetricLine> lines)
-    {
-        var window = root.GetObject(key);
-        if (window is null)
+        IReadOnlyList<MetricLine> lines;
+        try
         {
-            return;
+            lines = OllamaUsageMapper.MapUsage(usage.Text);
+        }
+        catch (Exception)
+        {
+            return ProviderSnapshot.Error(Provider, "Ollama usage response could not be mapped.", ErrorCategory.Decoding);
         }
 
-        var used = window.Value.GetDouble("used", "utilization", "percent") ?? 0;
-        lines.Add(MetricLine.Progress(label, used, 100, ProgressFormat.Percent));
+        string? plan = null;
+        string? warning = null;
+        try
+        {
+            var account = await SignedAsync(privateKey, "POST", "/api/me", cancellationToken).ConfigureAwait(false);
+            if (account.IsSuccess)
+            {
+                plan = OllamaUsageMapper.PlanName(account.Text);
+            }
+            else
+            {
+                warning = "Couldn't read your Ollama plan. Usage below is still up to date.";
+            }
+        }
+        catch (Exception)
+        {
+            warning = "Couldn't read your Ollama plan. Usage below is still up to date.";
+        }
+
+        return ProviderSnapshot.Make(Provider, plan, lines, _clock.Now, warning: warning);
     }
 
-    private async Task<HttpResponse> SignedGetAsync(Ed25519PrivateKeyParameters key, string url, CancellationToken cancellationToken)
+    private async Task<HttpResponse> SignedAsync(Ed25519PrivateKeyParameters key, string method, string path, CancellationToken cancellationToken)
     {
-        var uri = new Uri(url);
-        var timestamp = _clock.Now.ToUnixTimeSeconds().ToString();
-        var payload = Encoding.UTF8.GetBytes($"{timestamp},{uri.PathAndQuery}");
-        var signer = new Ed25519Signer();
-        signer.Init(true, key);
-        signer.BlockUpdate(payload, 0, payload.Length);
-        var signature = Convert.ToBase64String(signer.GenerateSignature());
+        var requestUri = $"{path}?ts={_clock.Now.ToUnixTimeSeconds()}";
+        var authorization = OllamaRequestSigner.Authorization(key, method, requestUri);
         var headers = new Dictionary<string, string>
         {
-            ["Authorization"] = "Bearer " + timestamp + ":" + signature,
+            ["Authorization"] = authorization,
             ["Accept"] = "application/json",
         };
-        return await _http.SendAsync(JsonRequest.Get(url, headers, TimeSpan.FromSeconds(15)), cancellationToken).ConfigureAwait(false);
+        var url = "https://ollama.com" + requestUri;
+        return method == "POST"
+            ? await _http.SendAsync(JsonRequest.PostJson(url, "{}", headers, TimeSpan.FromSeconds(15)), cancellationToken).ConfigureAwait(false)
+            : await _http.SendAsync(JsonRequest.Get(url, headers, TimeSpan.FromSeconds(15)), cancellationToken).ConfigureAwait(false);
     }
 }

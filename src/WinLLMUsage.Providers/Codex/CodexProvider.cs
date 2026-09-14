@@ -35,6 +35,7 @@ public sealed class CodexProvider : IProviderRuntime
 
     public Provider Provider { get; }
     public IReadOnlyList<WidgetDescriptor> WidgetDescriptors { get; }
+    public string? IdentityKey => LoadAuth()?.AccountId;
 
     public Task<bool> HasLocalCredentialsAsync(CancellationToken cancellationToken) =>
         Task.FromResult(LoadAuth() is { AccessToken: not null });
@@ -316,7 +317,41 @@ public sealed class CodexProvider : IProviderRuntime
 
         using var doc = JsonDocument.Parse(response.Body);
         var access = doc.RootElement.GetString("access_token");
-        return access is null ? null : current with { AccessToken = access, RefreshToken = doc.RootElement.GetString("refresh_token") ?? current.RefreshToken };
+        if (access is null)
+        {
+            return null;
+        }
+
+        var next = current with { AccessToken = access, RefreshToken = doc.RootElement.GetString("refresh_token") ?? current.RefreshToken };
+        PersistAuth(next);
+        return next;
+    }
+
+    private static void PersistAuth(CodexAuth auth)
+    {
+        if (string.IsNullOrWhiteSpace(auth.Path) || !File.Exists(auth.Path))
+        {
+            return;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(auth.Path));
+            var root = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(doc.RootElement.GetRawText()) ?? [];
+            var tokens = new Dictionary<string, object?>
+            {
+                ["access_token"] = auth.AccessToken,
+                ["refresh_token"] = auth.RefreshToken,
+                ["account_id"] = auth.AccountId,
+            };
+            root["tokens"] = JsonSerializer.SerializeToElement(tokens);
+            var tmp = auth.Path + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(root));
+            File.Move(tmp, auth.Path, overwrite: true);
+        }
+        catch (Exception)
+        {
+        }
     }
 
     private async Task<ProviderUsageHistory?> ScanLogsAsync(CancellationToken cancellationToken)

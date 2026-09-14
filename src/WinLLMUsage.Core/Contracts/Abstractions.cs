@@ -25,9 +25,24 @@ public interface IProviderRuntime
 
     IReadOnlyList<WidgetDescriptor> WidgetDescriptors { get; }
 
+    string? IdentityKey => null;
+
     Task<ProviderSnapshot> RefreshAsync(bool isManual, CancellationToken cancellationToken);
 
     Task<bool> HasLocalCredentialsAsync(CancellationToken cancellationToken);
+}
+
+public interface IPricingService
+{
+    Pricing.ModelPricing Current { get; }
+
+    double? Estimate(
+        string model,
+        long inputTokens,
+        long outputTokens,
+        long cacheReadTokens = 0,
+        long cacheWriteTokens = 0,
+        double priorityMultiplier = 1);
 }
 
 public interface IHttpTransport

@@ -4,7 +4,7 @@ Windows port of [OpenUsage](https://github.com/robinebers/openusage) v0.7.11 (`7
 
 WinLLMUsage aims to be a Windows tray / CLI utility for AI-tool quotas, spend and reset times. The current tree contains a CLI/headless host and partial implementations for 11 providers; a working tray application has not been delivered.
 
-This is a **development** tree (`0.1.0-dev`). It is **partially implemented, with a known failing Windows build**. The 28 macOS tests cover selected cases, not complete provider or product behavior. See [the implementation review](docs/IMPLEMENTATION_REPORT.md) and [Windows verification backlog](docs/WINDOWS_VERIFICATION.md).
+Current version: **0.7.0**. Windows x64 installer and portable ZIP are published from the `windows-release` workflow to [GitHub Releases](https://github.com/inspiretelapps/WinLLMUsage/releases). Builds are unsigned. See [the implementation review](docs/IMPLEMENTATION_REPORT.md) and [Windows verification backlog](docs/WINDOWS_VERIFICATION.md).
 
 **Review packet:** [docs/IMPLEMENTATION_REPORT.md](docs/IMPLEMENTATION_REPORT.md)  
 **Repository:** https://github.com/inspiretelapps/WinLLMUsage (private)

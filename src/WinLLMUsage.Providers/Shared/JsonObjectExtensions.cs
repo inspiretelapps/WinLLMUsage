@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json;
 
 namespace WinLLMUsage.Providers.Shared;
@@ -31,7 +32,7 @@ public static class JsonObjectExtensions
                 return number;
             }
 
-            if (value.ValueKind == JsonValueKind.String && double.TryParse(value.GetString(), out number))
+            if (value.ValueKind == JsonValueKind.String && double.TryParse(value.GetString(), NumberStyles.Float, CultureInfo.InvariantCulture, out number))
             {
                 return number;
             }

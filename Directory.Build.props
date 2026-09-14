@@ -11,9 +11,9 @@
     <Authors>WinLLMUsage contributors</Authors>
     <Company>WinLLMUsage</Company>
     <Copyright>Copyright (c) 2026 Robin Ebers and WinLLMUsage contributors</Copyright>
-    <Version>0.1.0-dev</Version>
-    <AssemblyVersion>0.1.0.0</AssemblyVersion>
-    <FileVersion>0.1.0.0</FileVersion>
+    <Version>0.7.0</Version>
+    <AssemblyVersion>0.7.0.0</AssemblyVersion>
+    <FileVersion>0.7.0.0</FileVersion>
     <NeutralLanguage>en-US</NeutralLanguage>
     <IsPackable>false</IsPackable>
   </PropertyGroup>

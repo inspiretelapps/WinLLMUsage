@@ -13,9 +13,14 @@ namespace WinLLMUsage.Providers.Grok;
 
 public sealed class GrokProvider : IProviderRuntime
 {
+    public const string CreditsUrl = "https://cli-chat-proxy.grok.com/v1/billing?format=credits";
+    public const string SettingsUrl = "https://cli-chat-proxy.grok.com/v1/settings";
+
     private readonly IHttpTransport _http;
     private readonly AppPaths _paths;
     private readonly IClock _clock;
+    private string? _accessToken;
+    private string? _refreshToken;
 
     public GrokProvider(IHttpTransport http, AppPaths paths, IClock clock)
     {
@@ -34,61 +39,135 @@ public sealed class GrokProvider : IProviderRuntime
 
     public async Task<ProviderSnapshot> RefreshAsync(bool isManual, CancellationToken cancellationToken)
     {
-        var token = await LoadTokenAsync(cancellationToken).ConfigureAwait(false);
-        if (string.IsNullOrWhiteSpace(token))
+        LoadTokens();
+        if (string.IsNullOrWhiteSpace(_accessToken))
         {
             return ProviderSnapshot.Error(Provider, "Grok is not signed in on this machine.", ErrorCategory.NotLoggedIn);
         }
 
-        var headers = new Dictionary<string, string>
+        Dictionary<string, string> Headers() => new()
         {
-            ["Authorization"] = "Bearer " + token,
+            ["Authorization"] = "Bearer " + _accessToken,
             ["Accept"] = "application/json",
         };
-        var response = await ProviderAuthRetry.FetchAsync(
+
+        var credits = await ProviderAuthRetry.FetchAsync(
             _http,
-            _ => Task.FromResult(JsonRequest.Get("https://grok.x.ai/api/billing/settings", headers, TimeSpan.FromSeconds(15))),
-            _ => Task.FromResult(false),
+            _ => Task.FromResult(JsonRequest.Get(CreditsUrl, Headers(), TimeSpan.FromSeconds(15))),
+            ct => RefreshTokenAsync(ct),
             cancellationToken).ConfigureAwait(false);
-        if (!response.IsSuccess)
+        if (!credits.IsSuccess)
         {
-            return ProviderSnapshot.Error(Provider, $"Grok billing request failed ({response.Status}).", ProviderAuthRetry.Classify(response.Status));
+            return ProviderSnapshot.Error(Provider, $"Grok billing request failed ({credits.Status}).", ProviderAuthRetry.Classify(credits.Status));
         }
 
-        using var doc = JsonDocument.Parse(response.Body);
-        var root = doc.RootElement;
-        var lines = new List<MetricLine>();
-        var weekly = root.GetObject("weekly", "weekly_limit") ?? root;
-        var used = weekly.GetDouble("used", "utilization", "percent") ?? 0;
-        lines.Add(MetricLine.Progress("Weekly limit", used, 100, ProgressFormat.Percent, Iso8601.DateFrom(weekly.GetString("resets_at", "resetsAt"))));
-        var payg = root.GetString("pay_as_you_go", "payAsYouGo", "cap");
-        if (!string.IsNullOrWhiteSpace(payg))
+        IReadOnlyList<MetricLine> remote;
+        try
         {
-            lines.Add(MetricLine.Badge("Pay as you go", payg!));
+            remote = GrokUsageMapper.MapCreditsConfig(credits.Text);
+        }
+        catch (Exception)
+        {
+            return ProviderSnapshot.Error(Provider, "Grok billing response could not be mapped.", ErrorCategory.Decoding);
         }
 
+        string? plan = null;
+        try
+        {
+            var settings = await _http.SendAsync(JsonRequest.Get(SettingsUrl, Headers(), TimeSpan.FromSeconds(15)), cancellationToken).ConfigureAwait(false);
+            if (settings.IsSuccess)
+            {
+                plan = GrokUsageMapper.PlanName(settings.Text);
+            }
+        }
+        catch (Exception)
+        {
+        }
+
+        var lines = remote.ToList();
         var history = await ScanHistoryAsync(cancellationToken).ConfigureAwait(false);
         lines.AddRange(SpendTileMapper.Lines(history, _clock.Now, TimeZoneInfo.Local, estimated: true, SpendTileMapper.Trend(history, _clock.Now, TimeZoneInfo.Local), "From your Grok logs (estimated)"));
         MetricLine.AppendNoDataIfNeeded(lines);
-        return ProviderSnapshot.Make(Provider, root.GetString("plan"), lines, _clock.Now, history);
+        return ProviderSnapshot.Make(Provider, plan, lines, _clock.Now, history);
     }
 
-    private async Task<string?> LoadTokenAsync(CancellationToken cancellationToken)
+    private async Task<bool> RefreshTokenAsync(CancellationToken cancellationToken)
+    {
+        if (string.IsNullOrWhiteSpace(_refreshToken))
+        {
+            return false;
+        }
+
+        var body = JsonSerializer.Serialize(new { grant_type = "refresh_token", refresh_token = _refreshToken });
+        var response = await _http.SendAsync(
+            JsonRequest.PostJson("https://cli-chat-proxy.grok.com/v1/oauth/token", body, new Dictionary<string, string> { ["Content-Type"] = "application/json" }, TimeSpan.FromSeconds(15)),
+            cancellationToken).ConfigureAwait(false);
+        if (!response.IsSuccess)
+        {
+            return false;
+        }
+
+        using var doc = JsonDocument.Parse(response.Body);
+        var access = doc.RootElement.GetString("access_token", "accessToken");
+        if (string.IsNullOrWhiteSpace(access))
+        {
+            return false;
+        }
+
+        _accessToken = access;
+        _refreshToken = doc.RootElement.GetString("refresh_token") ?? _refreshToken;
+        PersistTokens();
+        return true;
+    }
+
+    private void LoadTokens()
     {
         var path = AuthPath();
         if (!File.Exists(path))
         {
-            return null;
+            return;
         }
 
         try
         {
-            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false));
-            return doc.RootElement.GetString("token", "accessToken", "access_token");
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            _accessToken = doc.RootElement.GetString("token", "accessToken", "access_token");
+            _refreshToken = doc.RootElement.GetString("refreshToken", "refresh_token");
         }
         catch (JsonException)
         {
-            return null;
+        }
+    }
+
+    private void PersistTokens()
+    {
+        var path = AuthPath();
+        if (!File.Exists(path))
+        {
+            return;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(path));
+            var map = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(doc.RootElement.GetRawText()) ?? [];
+            if (_accessToken is not null)
+            {
+                map["token"] = JsonSerializer.SerializeToElement(_accessToken);
+                map["accessToken"] = JsonSerializer.SerializeToElement(_accessToken);
+            }
+
+            if (_refreshToken is not null)
+            {
+                map["refreshToken"] = JsonSerializer.SerializeToElement(_refreshToken);
+            }
+
+            var tmp = path + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(map));
+            File.Move(tmp, path, overwrite: true);
+        }
+        catch (Exception)
+        {
         }
     }
 
@@ -137,11 +216,11 @@ public sealed class GrokProvider : IProviderRuntime
                     }
 
                     var tokens = element.GetInt64("total_tokens", "tokens") ?? 0;
-                    var cost = element.GetDouble("cost", "costUSD", "cost_usd") ?? 0;
+                    var cost = element.GetDouble("cost", "costUSD", "cost_usd");
                     var timestamp = Iso8601.DateFrom(element.GetString("timestamp", "created_at")) ?? _clock.Now;
                     var day = UsageHistoryDocument.FormatDay(timestamp, TimeZoneInfo.Local);
                     byDay.TryGetValue(day, out var existing);
-                    byDay[day] = (existing.Tokens + tokens, existing.Cost + cost);
+                    byDay[day] = (existing.Tokens + tokens, existing.Cost + (cost is { } c && c > 0 ? c : 0));
                 }
                 catch (JsonException)
                 {
@@ -149,12 +228,8 @@ public sealed class GrokProvider : IProviderRuntime
             }
         }
 
-        if (byDay.Count == 0)
-        {
-            return null;
-        }
-
-        var series = new DailyUsageSeries(byDay.OrderBy(kv => kv.Key).Select(kv => new DailyUsageEntry(kv.Key, kv.Value.Tokens, kv.Value.Cost)).ToArray());
-        return new ProviderUsageHistory(series);
+        return byDay.Count == 0
+            ? null
+            : new ProviderUsageHistory(new DailyUsageSeries(byDay.OrderBy(kv => kv.Key).Select(kv => new DailyUsageEntry(kv.Key, kv.Value.Tokens, kv.Value.Cost > 0 ? kv.Value.Cost : null)).ToArray()));
     }
 }

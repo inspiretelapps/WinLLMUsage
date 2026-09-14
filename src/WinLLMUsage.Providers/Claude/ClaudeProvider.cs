@@ -236,9 +236,44 @@ public sealed class ClaudeProvider : IProviderRuntime
 
         using var doc = JsonDocument.Parse(response.Body);
         var access = doc.RootElement.GetString("access_token", "accessToken");
-        return string.IsNullOrWhiteSpace(access)
-            ? null
-            : current with { AccessToken = access!, RefreshToken = doc.RootElement.GetString("refresh_token") ?? current.RefreshToken };
+        if (string.IsNullOrWhiteSpace(access))
+        {
+            return null;
+        }
+
+        var next = current with { AccessToken = access!, RefreshToken = doc.RootElement.GetString("refresh_token") ?? current.RefreshToken };
+        PersistCredentials(next);
+        return next;
+    }
+
+    private void PersistCredentials(ClaudeCredentials credentials)
+    {
+        var configDir = Environment.GetEnvironmentVariable("CLAUDE_CONFIG_DIR");
+        var file = string.IsNullOrWhiteSpace(configDir)
+            ? Path.Combine(_paths.UserProfile, ".claude", ".credentials.json")
+            : Path.Combine(configDir, ".credentials.json");
+        if (!File.Exists(file))
+        {
+            return;
+        }
+
+        try
+        {
+            using var doc = JsonDocument.Parse(File.ReadAllText(file));
+            var root = JsonSerializer.Deserialize<Dictionary<string, JsonElement>>(doc.RootElement.GetRawText()) ?? [];
+            var oauth = new Dictionary<string, object?>
+            {
+                ["accessToken"] = credentials.AccessToken,
+                ["refreshToken"] = credentials.RefreshToken,
+            };
+            root["claudeAiOauth"] = JsonSerializer.SerializeToElement(oauth);
+            var tmp = file + ".tmp";
+            File.WriteAllText(tmp, JsonSerializer.Serialize(root));
+            File.Move(tmp, file, overwrite: true);
+        }
+        catch (Exception)
+        {
+        }
     }
 
     private async Task<ProviderUsageHistory?> ScanLogsAsync(CancellationToken cancellationToken)

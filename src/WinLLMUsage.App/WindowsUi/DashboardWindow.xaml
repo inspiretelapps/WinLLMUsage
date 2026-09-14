@@ -3,18 +3,28 @@
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
         Title="WinLLMUsage"
         Width="400"
+        MinHeight="240"
         SizeToContent="Height"
         WindowStyle="None"
         ResizeMode="NoResize"
         ShowInTaskbar="False"
         Topmost="True"
         Background="#1E1E1E"
-        Foreground="#F5F5F5">
+        Foreground="#F5F5F5"
+        KeyDown="Window_KeyDown"
+        Deactivated="Window_Deactivated">
   <DockPanel>
+    <Border DockPanel.Dock="Top" Padding="12,10" Background="#252525">
+      <DockPanel>
+        <TextBlock Text="WinLLMUsage" FontWeight="SemiBold" FontSize="16"/>
+        <TextBlock Text="{Binding Status}" HorizontalAlignment="Right" Opacity="0.7"/>
+      </DockPanel>
+    </Border>
     <Border DockPanel.Dock="Bottom" Padding="12" Background="#252525">
       <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-        <Button Content="Refresh" Command="{Binding RefreshCommand}" Margin="0,0,8,0" Padding="10,4"/>
-        <Button Content="Settings" Click="Settings_Click" Margin="0,0,8,0" Padding="10,4"/>
+        <Button Content="Refresh" Command="{Binding RefreshCommand}" Margin="0,0,8,0" Padding="10,4" ToolTip="Ctrl+R"/>
+        <Button Content="Customize" Click="Customize_Click" Margin="0,0,8,0" Padding="10,4"/>
+        <Button Content="Settings" Click="Settings_Click" Margin="0,0,8,0" Padding="10,4" ToolTip="Ctrl+comma"/>
         <Button Content="Exit" Click="Exit_Click" Padding="10,4"/>
       </StackPanel>
     </Border>
@@ -24,13 +34,17 @@
           <DataTemplate>
             <Border Margin="0,0,0,12" Padding="12" Background="#2A2A2A" CornerRadius="8">
               <StackPanel>
-                <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="16"/>
-                <ItemsControl ItemsSource="{Binding Descriptors}" Margin="0,8,0,0">
+                <DockPanel>
+                  <TextBlock Text="{Binding Title}" FontWeight="SemiBold" FontSize="16"/>
+                  <TextBlock Text="{Binding Plan}" HorizontalAlignment="Right" Opacity="0.7"/>
+                </DockPanel>
+                <TextBlock Text="{Binding Warning}" Foreground="#FBBF24" TextWrapping="Wrap" Margin="0,4,0,0"/>
+                <ItemsControl ItemsSource="{Binding Rows}" Margin="0,8,0,0">
                   <ItemsControl.ItemTemplate>
                     <DataTemplate>
-                      <DockPanel Margin="0,2">
-                        <TextBlock Text="{Binding Title}" DockPanel.Dock="Left"/>
-                        <TextBlock Text="{Binding MetricLabel}" HorizontalAlignment="Right" Opacity="0.7"/>
+                      <DockPanel Margin="0,3">
+                        <TextBlock Text="{Binding Label}" DockPanel.Dock="Left"/>
+                        <TextBlock Text="{Binding Value}" HorizontalAlignment="Right"/>
                       </DockPanel>
                     </DataTemplate>
                   </ItemsControl.ItemTemplate>

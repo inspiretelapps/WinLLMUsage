@@ -1,27 +1,26 @@
-using System.Text.Json;
 using Microsoft.Data.Sqlite;
 using WinLLMUsage.Core.Catalog;
 using WinLLMUsage.Core.Contracts;
 using WinLLMUsage.Core.History;
 using WinLLMUsage.Core.Models;
-using WinLLMUsage.Core.Time;
 using WinLLMUsage.Infrastructure.Paths;
 using WinLLMUsage.Providers.Http;
-using WinLLMUsage.Providers.Shared;
 
 namespace WinLLMUsage.Providers.OpenCode;
 
 public sealed class OpenCodeProvider : IProviderRuntime
 {
+    public const string UsageUrl = "https://opencode.ai/zen/go/v1/usage";
+
     private readonly IHttpTransport _http;
     private readonly AppPaths _paths;
     private readonly IClock _clock;
-
-    public OpenCodeProvider(IHttpTransport http, AppPaths paths, IClock clock)
+    public OpenCodeProvider(IHttpTransport http, AppPaths paths, IClock clock, IPricingService? pricing = null)
     {
         _http = http;
         _paths = paths;
         _clock = clock;
+        _ = pricing;
         Provider = KnownProviders.OpenCode();
         WidgetDescriptors = KnownProviders.OpenCodeDescriptors();
     }
@@ -30,56 +29,91 @@ public sealed class OpenCodeProvider : IProviderRuntime
     public IReadOnlyList<WidgetDescriptor> WidgetDescriptors { get; }
 
     public Task<bool> HasLocalCredentialsAsync(CancellationToken cancellationToken) =>
-        Task.FromResult(File.Exists(AuthPath()));
+        Task.FromResult(!string.IsNullOrWhiteSpace(TryGoKey()));
 
     public async Task<ProviderSnapshot> RefreshAsync(bool isManual, CancellationToken cancellationToken)
     {
-        var token = await LoadTokenAsync(cancellationToken).ConfigureAwait(false);
+        var key = TryGoKey();
         var lines = new List<MetricLine>();
-        string? plan = null;
-        if (!string.IsNullOrWhiteSpace(token))
+        string? warning = null;
+        if (!string.IsNullOrWhiteSpace(key))
         {
             var headers = new Dictionary<string, string>
             {
-                ["Authorization"] = "Bearer " + token,
+                ["Authorization"] = "Bearer " + key,
                 ["Accept"] = "application/json",
             };
-            var response = await _http.SendAsync(JsonRequest.Get("https://opencode.ai/api/usage", headers, TimeSpan.FromSeconds(15)), cancellationToken).ConfigureAwait(false);
+            var response = await _http.SendAsync(JsonRequest.Get(UsageUrl, headers, TimeSpan.FromSeconds(15)), cancellationToken).ConfigureAwait(false);
             if (response.IsSuccess)
             {
-                using var doc = JsonDocument.Parse(response.Body);
-                var root = doc.RootElement;
-                plan = root.GetString("plan");
-                AddPercent(root, "session", "Session", MetricPeriod.SessionMs, lines);
-                AddPercent(root, "weekly", "Weekly", MetricPeriod.WeekMs, lines);
-                AddPercent(root, "monthly", "Monthly", (int)Math.Min(int.MaxValue, MetricPeriod.MonthMs), lines);
+                try
+                {
+                    lines.AddRange(OpenCodeUsageMapper.MapUsage(response.Text));
+                }
+                catch (Exception)
+                {
+                    return ProviderSnapshot.Error(Provider, "OpenCode usage response could not be mapped.", ErrorCategory.Decoding);
+                }
+            }
+            else if (response.Status is 401 or 403)
+            {
+                warning = "OpenCode Go credentials were rejected; showing local spend if available.";
             }
             else
             {
-                return ProviderSnapshot.Error(Provider, $"OpenCode usage request failed ({response.Status}).", ProviderAuthRetry.Classify(response.Status));
+                warning = $"OpenCode usage request failed ({response.Status}).";
             }
         }
-        else
+
+        var history = ScanLocalSpend();
+        if (history is not null)
+        {
+            lines.AddRange(SpendTileMapper.Lines(history, _clock.Now, TimeZoneInfo.Local, estimated: false, SpendTileMapper.Trend(history, _clock.Now, TimeZoneInfo.Local), "From your OpenCode logs"));
+        }
+
+        if (lines.Count == 0)
         {
             return ProviderSnapshot.Error(Provider, "OpenCode is not signed in.", ErrorCategory.NotLoggedIn);
         }
 
-        var history = ScanLocalSpend();
-        lines.AddRange(SpendTileMapper.Lines(history, _clock.Now, TimeZoneInfo.Local, estimated: false, SpendTileMapper.Trend(history, _clock.Now, TimeZoneInfo.Local), "From your OpenCode logs"));
         MetricLine.AppendNoDataIfNeeded(lines);
-        return ProviderSnapshot.Make(Provider, plan, lines, _clock.Now, history);
+        return ProviderSnapshot.Make(Provider, null, lines, _clock.Now, history, warning);
     }
 
-    private static void AddPercent(JsonElement root, string key, string label, int periodMs, List<MetricLine> lines)
+    public bool HasCodexOAuth()
     {
-        var window = root.GetObject(key);
-        if (window is null)
+        var path = AuthPath();
+        if (!File.Exists(path))
         {
-            return;
+            return false;
         }
 
-        var used = window.Value.GetDouble("used", "percent", "utilization") ?? 0;
-        lines.Add(MetricLine.Progress(label, used, 100, ProgressFormat.Percent, Iso8601.DateFrom(window.Value.GetString("resets_at", "resetsAt")), periodMs));
+        try
+        {
+            return OpenCodeUsageMapper.HasCodexOAuth(File.ReadAllText(path));
+        }
+        catch (Exception)
+        {
+            return false;
+        }
+    }
+
+    private string? TryGoKey()
+    {
+        var path = AuthPath();
+        if (!File.Exists(path))
+        {
+            return null;
+        }
+
+        try
+        {
+            return OpenCodeUsageMapper.GoApiKey(File.ReadAllText(path));
+        }
+        catch (Exception)
+        {
+            return null;
+        }
     }
 
     private string AuthPath()
@@ -91,56 +125,43 @@ public sealed class OpenCodeProvider : IProviderRuntime
             {
                 return auth;
             }
+
+            var nested = Path.Combine(home, "auth.json");
+            if (File.Exists(nested))
+            {
+                return nested;
+            }
         }
 
         return Path.Combine(_paths.UserProfile, ".local", "share", "opencode", "auth.json");
     }
 
-    private async Task<string?> LoadTokenAsync(CancellationToken cancellationToken)
-    {
-        var path = AuthPath();
-        if (!File.Exists(path))
-        {
-            return null;
-        }
-
-        try
-        {
-            using var doc = JsonDocument.Parse(await File.ReadAllTextAsync(path, cancellationToken).ConfigureAwait(false));
-            return doc.RootElement.GetString("token", "access_token", "apiKey");
-        }
-        catch (JsonException)
-        {
-            return null;
-        }
-    }
-
     private ProviderUsageHistory? ScanLocalSpend()
     {
         var homes = _paths.CandidateHomes("opencode").Where(Directory.Exists).ToArray();
-        if (homes.Length == 0)
-        {
-            return null;
-        }
-
         var byDay = new Dictionary<string, (long Tokens, double Cost)>(StringComparer.Ordinal);
         var seen = new HashSet<string>(StringComparer.Ordinal);
         foreach (var home in homes)
         {
-            foreach (var db in Directory.EnumerateFiles(home, "opencode*.db", SearchOption.AllDirectories))
+            IEnumerable<string> dbs;
+            try
+            {
+                dbs = Directory.EnumerateFiles(home, "opencode*.db", SearchOption.AllDirectories);
+            }
+            catch (Exception)
+            {
+                continue;
+            }
+
+            foreach (var db in dbs)
             {
                 try
                 {
-                    var cs = new SqliteConnectionStringBuilder
-                    {
-                        DataSource = db,
-                        Mode = SqliteOpenMode.ReadOnly,
-                        Cache = SqliteCacheMode.Shared,
-                    };
+                    var cs = new SqliteConnectionStringBuilder { DataSource = db, Mode = SqliteOpenMode.ReadOnly };
                     using var connection = new SqliteConnection(cs.ToString());
                     connection.Open();
                     using var command = connection.CreateCommand();
-                    command.CommandText = "SELECT id, tokens, cost, created_at FROM message WHERE cost IS NOT NULL LIMIT 100000";
+                    command.CommandText = "SELECT id, tokens, cost, created_at, providerID FROM message LIMIT 100000";
                     using var reader = command.ExecuteReader();
                     while (reader.Read())
                     {
@@ -151,11 +172,12 @@ public sealed class OpenCodeProvider : IProviderRuntime
                         }
 
                         var tokens = reader.IsDBNull(1) ? 0 : Convert.ToInt64(reader.GetValue(1));
-                        var cost = reader.IsDBNull(2) ? 0 : Convert.ToDouble(reader.GetValue(2));
+                        var cost = reader.IsDBNull(2) ? (double?)null : Convert.ToDouble(reader.GetValue(2));
                         var created = reader.IsDBNull(3) ? _clock.Now : DateTimeOffset.TryParse(reader.GetValue(3)?.ToString(), out var parsed) ? parsed : _clock.Now;
                         var day = UsageHistoryDocument.FormatDay(created, TimeZoneInfo.Local);
                         byDay.TryGetValue(day, out var existing);
-                        byDay[day] = (existing.Tokens + tokens, existing.Cost + cost);
+                        var addCost = cost is { } c && c > 0 ? c : 0;
+                        byDay[day] = (existing.Tokens + tokens, existing.Cost + addCost);
                     }
                 }
                 catch (SqliteException)
@@ -164,11 +186,8 @@ public sealed class OpenCodeProvider : IProviderRuntime
             }
         }
 
-        if (byDay.Count == 0)
-        {
-            return null;
-        }
-
-        return new ProviderUsageHistory(new DailyUsageSeries(byDay.OrderBy(kv => kv.Key).Select(kv => new DailyUsageEntry(kv.Key, kv.Value.Tokens, kv.Value.Cost)).ToArray()));
+        return byDay.Count == 0
+            ? null
+            : new ProviderUsageHistory(new DailyUsageSeries(byDay.OrderBy(kv => kv.Key).Select(kv => new DailyUsageEntry(kv.Key, kv.Value.Tokens, kv.Value.Cost > 0 ? kv.Value.Cost : null)).ToArray()));
     }
 }

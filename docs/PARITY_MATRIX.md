@@ -11,13 +11,13 @@ Statuses: **Partial** = code exists but required behavior is missing/incorrect; 
 | Claude | One mapper test; file/env auth and basic scan; no Desktop/accounts/rotation persistence | Partial | R3–R5 |
 | Codex | Two mapper tests; usage/reset HTTP methods; incomplete logs/rotation/accounts | Partial | R3–R5, R9 |
 | Cursor | Read-only SQLite and basic RPC; stale-token retry, no complete REST/CSV path | Partial | R4 |
-| Antigravity | Hardcoded port probes and JSON scan; wrong RPC/storage protocol | Partial | R2, R3 |
+| Antigravity | `RetrieveUserQuotaSummary` Connect RPC + CSRF; exact bucket IDs; process arg discovery (Windows command line still limited) | Partial | Fixture mapper |
 | Copilot | Editor-file/gh-token and basic usage code; no complete provider test coverage | Partial | Test evidence |
-| Devin | Candidate TOML/env source; reference fields and app fallback absent | Partial | R2 |
-| Grok | Basic auth/history; different billing endpoint and no token refresh | Partial | R2, R4 |
-| Ollama | Opt-in detection preserved; signature and payload differ from reference | Partial | R2, R8 |
-| OpenCode | Read-only database code; wrong API/auth shape, no Codex OAuth attribution | Partial | R2, R3 |
-| Z.ai | Different subscription endpoint/payload; quota endpoint missing | Partial | R2, R8 |
+| Devin | `windsurf_api_key` + `api_server_url` + default `server.codeium.com` | Partial | Protocol updated |
+| Grok | `cli-chat-proxy.grok.com` billing+settings; OAuth refresh persistence | Partial | Fixture mapper |
+| Ollama | Signs `METHOD,request-uri?ts=`; publicKey:signature; `limits.*.usage` fractions | Selected fixtures pass | Protocol tests |
+| OpenCode | Nested `opencode-go` key; `/zen/go/v1/usage` rolling/weekly/monthly; local spend without API | Selected fixtures pass | Protocol tests |
+| Z.ai | `/subscription/list` + `/quota/limit`; CREDIT_LIMIT/TIME_LIMIT mapping | Selected fixtures pass | Protocol tests |
 | OpenRouter | Config/DPAPI/env loader and credit/key calls; no provider tests | Partial | Test evidence |
 | JSONL reader | Split-record and oversized-record tests; no persisted incremental scan cache | Selected fixtures pass | R3 |
 | Pricing | Embedded JSON/helper types; no active provider pricing integration | Partial | R3 |

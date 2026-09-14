@@ -56,6 +56,11 @@ public sealed class SnapshotCache : ISnapshotRepository
             return false;
         }
 
+        if (entry.Snapshot.IsError)
+        {
+            return false;
+        }
+
         return _clock.Now - entry.Snapshot.RefreshedAt < RefreshSetting.Interval;
     }
 
@@ -69,15 +74,17 @@ public sealed class SnapshotCache : ISnapshotRepository
         EnsureLoaded();
         lock (_gate)
         {
+            using var fileLock = AcquireLock();
+            ReloadUnlocked();
             _entries[snapshot.ProviderId] = new CacheEntry(snapshot, identityKey, WrittenThisProcess: true);
-            Persist();
+            PersistUnlocked();
         }
     }
 
     public bool HasStaleAccountStamp(string providerId, string? currentIdentityKey)
     {
         EnsureLoaded();
-        if (currentIdentityKey is null || !_entries.TryGetValue(providerId, out var entry))
+        if (string.IsNullOrEmpty(currentIdentityKey) || !_entries.TryGetValue(providerId, out var entry))
         {
             return false;
         }
@@ -99,33 +106,59 @@ public sealed class SnapshotCache : ISnapshotRepository
                 return;
             }
 
-            try
-            {
-                if (File.Exists(_path))
-                {
-                    var json = File.ReadAllText(_path);
-                    var loaded = JsonSerializer.Deserialize<Dictionary<string, CacheEntry>>(json, JsonDefaults.Cache);
-                    if (loaded is not null)
-                    {
-                        _entries = new Dictionary<string, CacheEntry>(loaded, StringComparer.Ordinal);
-                    }
-                }
-            }
-            catch (JsonException)
-            {
-                _entries = new Dictionary<string, CacheEntry>(StringComparer.Ordinal);
-            }
-
+            ReloadUnlocked();
             _loaded = true;
         }
     }
 
-    private void Persist()
+    private void ReloadUnlocked()
+    {
+        try
+        {
+            if (!File.Exists(_path))
+            {
+                return;
+            }
+
+            var json = File.ReadAllText(_path);
+            var loaded = JsonSerializer.Deserialize<Dictionary<string, CacheEntry>>(json, JsonDefaults.Cache);
+            if (loaded is null)
+            {
+                return;
+            }
+
+            _entries = new Dictionary<string, CacheEntry>(StringComparer.Ordinal);
+            foreach (var (key, entry) in loaded)
+            {
+                _entries[key] = entry with { WrittenThisProcess = false };
+            }
+        }
+        catch (JsonException)
+        {
+            _entries = new Dictionary<string, CacheEntry>(StringComparer.Ordinal);
+        }
+        catch (IOException)
+        {
+        }
+    }
+
+    private void PersistUnlocked()
     {
         Directory.CreateDirectory(Path.GetDirectoryName(_path)!);
-        var tmp = _path + ".tmp";
-        File.WriteAllText(tmp, JsonSerializer.Serialize(_entries, JsonDefaults.Cache));
+        var tmp = _path + "." + Guid.NewGuid().ToString("n") + ".tmp";
+        var persistable = _entries.ToDictionary(
+            kv => kv.Key,
+            kv => kv.Value with { WrittenThisProcess = false },
+            StringComparer.Ordinal);
+        File.WriteAllText(tmp, JsonSerializer.Serialize(persistable, JsonDefaults.Cache));
         File.Move(tmp, _path, overwrite: true);
+    }
+
+    private FileStream AcquireLock()
+    {
+        var lockPath = _path + ".lock";
+        Directory.CreateDirectory(Path.GetDirectoryName(lockPath)!);
+        return new FileStream(lockPath, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None);
     }
 
     public sealed record CacheEntry(ProviderSnapshot Snapshot, string? IdentityKey, bool WrittenThisProcess = false);

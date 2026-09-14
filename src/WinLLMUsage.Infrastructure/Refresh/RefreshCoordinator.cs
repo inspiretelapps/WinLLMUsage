@@ -48,6 +48,11 @@ public sealed class RefreshCoordinator : IRefreshCoordinator
         var runtime = _registry.Providers.FirstOrDefault(p => p.Provider.Id == providerId)
                       ?? throw new InvalidOperationException($"Unknown provider {providerId}");
 
+        if (!force && _cache.HasStaleAccountStamp(providerId, runtime.IdentityKey))
+        {
+            force = true;
+        }
+
         if (!force && _cache.IsFresh(providerId))
         {
             return _cache.Load(providerId)!;
@@ -75,7 +80,12 @@ public sealed class RefreshCoordinator : IRefreshCoordinator
 
             Errors.Remove(providerId);
             _failureBackoff.Remove(providerId);
-            _cache.Store(snapshot, identityKey: null);
+            if (_cache.HasStaleAccountStamp(providerId, runtime.IdentityKey))
+            {
+                // Drop the foreign-account snapshot by overwriting after a successful refresh only.
+            }
+
+            _cache.Store(snapshot, runtime.IdentityKey);
             return snapshot;
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
