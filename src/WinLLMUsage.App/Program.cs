@@ -12,9 +12,7 @@ public static class Program
 #endif
     public static int Main(string[] args)
     {
-#if WINDOWS_APP
-        Velopack.VelopackApp.Build().Run();
-#endif
+        VelopackBootstrap.Run();
         using var instance = new SingleInstanceGuard(@"Local\WinLLMUsage-" + Environment.UserName);
         if (!instance.CreatedNew)
         {
