@@ -45,7 +45,7 @@ public sealed class TrayController : IDisposable
             }
         });
         menu.Items.Add("Settings", null, (_, _) => new SettingsWindow((DashboardViewModel)dashboard.DataContext).ShowDialog());
-        menu.Items.Add("Exit", null, (_, _) => Application.Current.Shutdown());
+        menu.Items.Add("Exit", null, (_, _) => System.Windows.Application.Current.Shutdown());
         _icon.ContextMenuStrip = menu;
         _ = usage;
     }

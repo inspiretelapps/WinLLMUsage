@@ -14,7 +14,7 @@ internal static class DesktopProgram
         usage.SeedEnablementAsync(CancellationToken.None).GetAwaiter().GetResult();
         usage.Host.Start();
 
-        var wpf = new Application
+        var wpf = new System.Windows.Application
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown,
         };

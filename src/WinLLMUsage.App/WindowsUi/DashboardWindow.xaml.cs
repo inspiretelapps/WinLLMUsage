@@ -33,9 +33,9 @@ public partial class DashboardWindow : Window
 
     private void Customize_Click(object sender, RoutedEventArgs e) => new CustomizeWindow((DashboardViewModel)DataContext).ShowDialog();
 
-    private void Exit_Click(object sender, RoutedEventArgs e) => Application.Current.Shutdown();
+    private void Exit_Click(object sender, RoutedEventArgs e) => System.Windows.Application.Current.Shutdown();
 
-    private async void Window_KeyDown(object sender, KeyEventArgs e)
+    private async void Window_KeyDown(object sender, System.Windows.Input.KeyEventArgs e)
     {
         if (e.Key == Key.Escape)
         {
@@ -50,7 +50,7 @@ public partial class DashboardWindow : Window
         }
         else if (e.Key == Key.OemComma && Keyboard.Modifiers == ModifierKeys.Control)
         {
-            Settings_Click(sender, e);
+            Settings_Click(sender, new RoutedEventArgs());
         }
     }
 
