@@ -1,0 +1,22 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>WinLLMUsage.App</RootNamespace>
+    <AssemblyName>WinLLMUsage</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\WinLLMUsage.Core\WinLLMUsage.Core.csproj" />
+    <ProjectReference Include="..\WinLLMUsage.Providers\WinLLMUsage.Providers.csproj" />
+    <ProjectReference Include="..\WinLLMUsage.Infrastructure\WinLLMUsage.Infrastructure.csproj" />
+    <ProjectReference Include="..\WinLLMUsage.Windows\WinLLMUsage.Windows.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="CommunityToolkit.Mvvm" />
+    <PackageReference Include="Microsoft.Extensions.Hosting" />
+  </ItemGroup>
+  <ItemGroup>
+    <Page Remove="WindowsUi\**" />
+    <None Include="WindowsUi\**" CopyToOutputDirectory="Never" />
+  </ItemGroup>
+</Project>

@@ -1,0 +1,16 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net10.0</TargetFramework>
+    <RootNamespace>WinLLMUsage.Providers</RootNamespace>
+    <AssemblyName>WinLLMUsage.Providers</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\WinLLMUsage.Core\WinLLMUsage.Core.csproj" />
+    <ProjectReference Include="..\WinLLMUsage.Infrastructure\WinLLMUsage.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="BouncyCastle.Cryptography" />
+    <PackageReference Include="Tomlyn" />
+    <PackageReference Include="YamlDotNet" />
+  </ItemGroup>
+</Project>
